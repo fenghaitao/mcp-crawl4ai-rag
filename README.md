@@ -74,7 +74,9 @@ The server provides essential web crawling and search tools:
 - [Docker/Docker Desktop](https://www.docker.com/products/docker-desktop/) if running the MCP server as a container (recommended)
 - [Python 3.12+](https://www.python.org/downloads/) if running the MCP server directly through uv
 - [Supabase](https://supabase.com/) (database for RAG)
-- [OpenAI API key](https://platform.openai.com/api-keys) (for generating embeddings)
+- **Embeddings** (choose one):
+  - [OpenAI API key](https://platform.openai.com/api-keys) (for OpenAI text-embedding-3-small)
+  - [GitHub Copilot subscription](https://github.com/features/copilot) + [GitHub token](https://github.com/settings/tokens) (for GitHub Copilot embeddings)
 - [Neo4j](https://neo4j.com/) (optional, for knowledge graph functionality) - see [Knowledge Graph Setup](#knowledge-graph-setup) section
 
 ## Installation
@@ -185,11 +187,18 @@ HOST=0.0.0.0
 PORT=8051
 TRANSPORT=sse
 
-# OpenAI API Configuration
+# AI Provider Configuration
+USE_COPILOT_EMBEDDINGS=false
+USE_COPILOT_CHAT=false
+
+# OpenAI API Configuration (when USE_COPILOT_EMBEDDINGS=false or USE_COPILOT_CHAT=false)
 OPENAI_API_KEY=your_openai_api_key
 
+# GitHub Copilot Configuration (when USE_COPILOT_EMBEDDINGS=true or USE_COPILOT_CHAT=true)
+GITHUB_TOKEN=your_github_token
+
 # LLM for summaries and contextual embeddings
-MODEL_CHOICE=gpt-4.1-nano
+MODEL_CHOICE=gpt-4o
 
 # RAG Strategies (set to "true" or "false", default to "false")
 USE_CONTEXTUAL_EMBEDDINGS=false
@@ -206,6 +215,58 @@ SUPABASE_SERVICE_KEY=your_supabase_service_key
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=your_neo4j_password
+```
+
+### Embedding Options
+
+The Crawl4AI RAG MCP server supports two embedding providers:
+
+#### **OpenAI Embeddings (Default)**
+Uses OpenAI's `text-embedding-3-small` model for generating embeddings.
+
+- **Setup**: Set `USE_COPILOT_EMBEDDINGS=false` and provide your `OPENAI_API_KEY`
+- **Cost**: Pay-per-use based on OpenAI's pricing
+- **Performance**: Fast and reliable
+- **When to use**: When you have an OpenAI API key and want predictable billing
+
+#### **GitHub Copilot Embeddings**
+Uses GitHub Copilot's embedding API with the same `text-embedding-3-small` model.
+
+- **Setup**: Set `USE_COPILOT_EMBEDDINGS=true` and provide your `GITHUB_TOKEN`
+- **Requirements**: Active GitHub Copilot subscription
+- **Cost**: Included with your Copilot subscription (no additional per-embedding charges)
+- **Performance**: Fast and reliable, same underlying model as OpenAI
+- **When to use**: When you have a Copilot subscription and want to leverage it for embeddings
+
+**Note**: Both options use the same underlying model (`text-embedding-3-small`), so embedding quality and dimensions (1536) are identical. The choice depends on your subscription preferences and billing setup.
+
+### Chat Completion Options
+
+The Crawl4AI RAG MCP server also supports two providers for chat completions (used for contextual embeddings, code summaries, etc.):
+
+#### **OpenAI Chat Completions (Default)**
+Uses OpenAI's chat models like `gpt-4o-mini` for generating summaries and contextual information.
+
+- **Setup**: Set `USE_COPILOT_CHAT=false` and provide your `OPENAI_API_KEY`
+- **Models**: `gpt-4o-mini`, `gpt-4o`, `gpt-3.5-turbo`, etc.
+- **Cost**: Pay-per-use based on OpenAI's pricing
+- **When to use**: When you have an OpenAI API key and want access to the full range of OpenAI models
+
+#### **GitHub Copilot Chat Completions**
+Uses GitHub Copilot's chat API with models like `gpt-4o`.
+
+- **Setup**: Set `USE_COPILOT_CHAT=true` and provide your `GITHUB_TOKEN`
+- **Models**: Primarily `gpt-4o` (automatically mapped from other model names)
+- **Requirements**: Active GitHub Copilot subscription
+- **Cost**: Included with your Copilot subscription
+- **When to use**: When you have a Copilot subscription and want to leverage it for chat completions
+
+**Recommended Configuration for Full Copilot Usage:**
+```
+USE_COPILOT_EMBEDDINGS=true
+USE_COPILOT_CHAT=true
+MODEL_CHOICE=gpt-4o
+GITHUB_TOKEN=your_github_token
 ```
 
 ### RAG Strategy Options
