@@ -45,62 +45,32 @@ class CopilotClient:
         self.github_token = github_token or os.getenv("GITHUB_TOKEN")
         self.copilot_token: Optional[str] = None
         self.vscode_version = "1.85.0"
-        self.account_type = "individual"  # Default to individual
         
-        # API Configuration
-        self.copilot_version = "0.26.7"
-        self.editor_plugin_version = f"copilot-chat/{self.copilot_version}"
-        self.user_agent = f"GitHubCopilotChat/{self.copilot_version}"
-        self.api_version = "2025-04-01"
+    async def _ensure_authenticated(self) -> None:
+        """Ensure we have valid GitHub and Copilot tokens."""
+        if not self.github_token:
+            raise ValueError("GitHub token is required")
         
-        # GitHub API constants
-        self.github_api_base_url = "https://api.github.com"
-        self.github_client_id = "Iv1.b507a08c87ecfe98"
-        self.github_api_version = "2022-11-28"  # GitHub API uses different version
-        
-    def _get_copilot_base_url(self) -> str:
-        """Get Copilot API base URL based on account type."""
-        if self.account_type == "individual":
-            return "https://api.githubcopilot.com"
-        return f"https://api.{self.account_type}.githubcopilot.com"
+        if not self.copilot_token:
+            self.copilot_token = await self._get_copilot_token()
     
-    def _get_copilot_headers(self) -> Dict[str, str]:
-        """Generate headers for Copilot API requests."""
-        return {
-            "Authorization": f"Bearer {self.copilot_token}",
-            "content-type": "application/json",
-            "copilot-integration-id": "vscode-chat",
-            "editor-version": f"vscode/{self.vscode_version}",
-            "editor-plugin-version": self.editor_plugin_version,
-            "user-agent": self.user_agent,
-            "openai-intent": "conversation-panel",
-            "x-github-api-version": self.api_version,
-            "x-request-id": str(uuid.uuid4()),
-            "x-vscode-user-agent-library-version": "electron-fetch",
-        }
-    
-    def _get_github_headers(self) -> Dict[str, str]:
-        """Generate headers for GitHub API requests."""
-        return {
+    async def _get_copilot_token(self) -> str:
+        """Get Copilot API token."""
+        headers = {
             "content-type": "application/json",
             "accept": "application/json",
             "authorization": f"token {self.github_token}",
             "editor-version": f"vscode/{self.vscode_version}",
-            "editor-plugin-version": self.editor_plugin_version,
-            "user-agent": self.user_agent,
-            "x-github-api-version": self.github_api_version,  # Use GitHub API version
+            "editor-plugin-version": "copilot-chat/0.26.7",
+            "user-agent": "GitHubCopilotChat/0.26.7",
+            "x-github-api-version": "2025-04-01",
             "x-vscode-user-agent-library-version": "electron-fetch",
         }
-    
-    async def _get_copilot_token_from_github(self) -> str:
-        """Get Copilot token from GitHub API."""
-        if not self.github_token:
-            raise ValueError("GitHub token is required")
         
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.github_api_base_url}/copilot_internal/v2/token",
-                headers=self._get_github_headers()
+                "https://api.github.com/copilot_internal/v2/token",
+                headers=headers,
             )
             
             if not response.is_success:
@@ -109,98 +79,92 @@ class CopilotClient:
             data = response.json()
             return data["token"]
     
-    async def _get_user_info(self) -> Dict[str, Any]:
-        """Get user information from GitHub API."""
-        if not self.github_token:
-            raise ValueError("GitHub token is required")
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{self.github_api_base_url}/user",
-                headers=self._get_github_headers()
-            )
-            
-            if not response.is_success:
-                raise Exception(f"Failed to get user info: {response.status_code} {response.text}")
-            
-            return response.json()
+    def _get_copilot_base_url(self, account_type: str = "individual") -> str:
+        """Get Copilot API base URL."""
+        if account_type == "individual":
+            return "https://api.githubcopilot.com"
+        return f"https://api.{account_type}.githubcopilot.com"
     
-    async def initialize(self) -> bool:
-        """
-        Initialize the client by getting Copilot token and user info.
-        
-        Returns:
-            True if initialization successful, False otherwise
-        """
-        try:
-            if not self.github_token:
-                print("No GitHub token provided. Please set GITHUB_TOKEN environment variable.")
-                return False
-            
-            # Get user info to determine account type
-            user_info = await self._get_user_info()
-            print(f"Authenticated as: {user_info.get('login', 'Unknown')}")
-            
-            # Get Copilot token
-            self.copilot_token = await self._get_copilot_token_from_github()
-            print("Successfully obtained Copilot token")
-            
-            return True
-            
-        except Exception as e:
-            print(f"Failed to initialize Copilot client: {e}")
-            return False
+    def _get_copilot_headers(self) -> Dict[str, str]:
+        """Get headers for Copilot API requests."""
+        return {
+            "Authorization": f"Bearer {self.copilot_token}",
+            "content-type": "application/json",
+            "copilot-integration-id": "vscode-chat",
+            "editor-version": f"vscode/{self.vscode_version}",
+            "editor-plugin-version": "copilot-chat/0.26.7",
+            "user-agent": "GitHubCopilotChat/0.26.7",
+            "openai-intent": "conversation-panel",
+            "x-github-api-version": "2025-04-01",
+            "x-request-id": str(uuid.uuid4()),
+            "x-vscode-user-agent-library-version": "electron-fetch",
+        }
     
     async def create_embeddings(
         self, 
         texts: Union[str, List[str]], 
-        model: str = "text-embedding-3-small"
+        model: str = "text-embedding-3-small",
+        account_type: str = "individual"
     ) -> CopilotEmbeddingResult:
         """
-        Create embeddings using GitHub Copilot API.
+        Create embeddings for the given texts.
         
         Args:
-            texts: Text or list of texts to embed
-            model: Model to use for embeddings
+            texts: Single text string or list of text strings to embed
+            model: Embedding model to use (default: text-embedding-3-small)
+            account_type: GitHub account type (individual, business, enterprise)
             
         Returns:
-            CopilotEmbeddingResult containing embeddings and metadata
+            CopilotEmbeddingResult with embeddings, model info, and usage data
         """
-        if not self.copilot_token:
-            raise ValueError("Client not initialized. Call initialize() first.")
+        await self._ensure_authenticated()
         
         # Ensure texts is a list
         if isinstance(texts, str):
-            input_texts = [texts]
+            text_list = [texts]
         else:
-            input_texts = texts
+            text_list = texts
         
         payload = {
-            "input": input_texts,
+            "input": text_list,
             "model": model
         }
         
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self._get_copilot_base_url()}/embeddings",
+                f"{self._get_copilot_base_url(account_type)}/embeddings",
                 headers=self._get_copilot_headers(),
                 json=payload,
                 timeout=30.0
             )
             
             if not response.is_success:
-                raise Exception(f"Failed to create embeddings: {response.status_code} {response.text}")
+                # If token is expired, clear it and retry once
+                if response.status_code == 401:
+                    print("Copilot token expired, refreshing...")
+                    self.copilot_token = None
+                    await self._ensure_authenticated()
+                    
+                    response = await client.post(
+                        f"{self._get_copilot_base_url(account_type)}/embeddings",
+                        headers=self._get_copilot_headers(),
+                        json=payload,
+                        timeout=30.0
+                    )
+                
+                if not response.is_success:
+                    raise Exception(f"Failed to create embeddings: {response.status_code} {response.text}")
             
             data = response.json()
             
-            # Extract embeddings from response
+            # Extract embeddings
             embeddings = [item["embedding"] for item in data["data"]]
             
             return CopilotEmbeddingResult(
                 embeddings=embeddings,
-                model=data.get("model", "text-embedding-3-small"),  # Fallback if model not in response
-                usage=data.get("usage", {}),  # Fallback if usage not in response
-                texts=input_texts
+                model=data.get("model", model),
+                usage=data.get("usage", {}),
+                texts=text_list
             )
     
     async def create_embeddings_batch(self, texts: List[str], batch_size: int = 20) -> List[List[float]]:
@@ -261,6 +225,7 @@ class CopilotClient:
         model: str = "gpt-4o",
         temperature: float = 0.3,
         max_tokens: int = 200,
+        account_type: str = "individual",
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -271,13 +236,13 @@ class CopilotClient:
             model: Model to use for chat completion (default: gpt-4o)
             temperature: Temperature for generation
             max_tokens: Maximum tokens to generate
+            account_type: GitHub account type
             **kwargs: Additional parameters
             
         Returns:
             Chat completion response
         """
-        if not self.copilot_token:
-            raise ValueError("Client not initialized. Call initialize() first.")
+        await self._ensure_authenticated()
         
         payload = {
             "messages": messages,
@@ -289,16 +254,52 @@ class CopilotClient:
         
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self._get_copilot_base_url()}/chat/completions",
+                f"{self._get_copilot_base_url(account_type)}/chat/completions",
                 headers=self._get_copilot_headers(),
                 json=payload,
                 timeout=60.0
             )
             
             if not response.is_success:
-                raise Exception(f"Failed to create chat completion: {response.status_code} {response.text}")
+                # If token is expired, clear it and retry once
+                if response.status_code == 401:
+                    print("Copilot token expired, refreshing...")
+                    self.copilot_token = None
+                    await self._ensure_authenticated()
+                    
+                    response = await client.post(
+                        f"{self._get_copilot_base_url(account_type)}/chat/completions",
+                        headers=self._get_copilot_headers(),
+                        json=payload,
+                        timeout=60.0
+                    )
+                
+                if not response.is_success:
+                    raise Exception(f"Failed to create chat completion: {response.status_code} {response.text}")
             
             return response.json()
+
+    async def initialize(self) -> bool:
+        """
+        Initialize the client by getting Copilot token.
+        
+        Returns:
+            True if initialization successful, False otherwise
+        """
+        try:
+            if not self.github_token:
+                print("No GitHub token provided. Please set GITHUB_TOKEN environment variable.")
+                return False
+            
+            # Get Copilot token
+            await self._ensure_authenticated()
+            print("Successfully obtained Copilot token")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Failed to initialize Copilot client: {e}")
+            return False
 
 
 # Global client instance
