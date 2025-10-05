@@ -14,4 +14,17 @@ dependencies = [
     "neo4j>=5.28.1",
     "httpx>=0.25.0",
     "aiofiles>=23.0.0",
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "integration: marks tests as integration tests",
+    "asyncio: marks tests as async tests",
+]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

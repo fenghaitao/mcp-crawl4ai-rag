@@ -47,8 +47,8 @@ async def test_copilot_embeddings():
     print(f"✅ GitHub token found (length: {len(github_token)})")
     
     # Import and initialize client
-    from copilot_embedding_client import CopilotEmbeddingClient
-    client = CopilotEmbeddingClient(github_token)
+    from copilot_client import CopilotClient
+    client = CopilotClient(github_token)
     
     print("Initializing Copilot client...")
     if not await client.initialize():

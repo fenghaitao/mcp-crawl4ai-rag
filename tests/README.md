@@ -7,7 +7,7 @@ This directory contains integration tests for the crawl4ai-mcp project, includin
 ### Core Integration Tests
 
 - **`test_neo4j_integration.py`** - Tests Neo4j connection, knowledge graph tools, and repository parsing
-- **`test_copilot_integration.py`** - Tests GitHub Copilot embeddings and chat completions
+- **`test_copilot_integration.py`** - Tests GitHub Copilot client (embeddings and chat completions)
 - **`run_all_tests.py`** - Test runner that executes all integration tests
 
 ### Sample Files

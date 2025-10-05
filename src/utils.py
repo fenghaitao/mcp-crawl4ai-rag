@@ -11,6 +11,13 @@ import openai
 import re
 import time
 
+# Import Copilot client
+try:
+    from .copilot_client import create_embeddings_batch_copilot, create_embedding_copilot, create_chat_completion_copilot
+except ImportError:
+    # Fallback for when running from different contexts (e.g., tests)
+    from copilot_client import create_embeddings_batch_copilot, create_embedding_copilot, create_chat_completion_copilot
+
 # Load OpenAI API key for embeddings
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -32,6 +39,7 @@ def get_supabase_client() -> Client:
 def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
     """
     Create embeddings for multiple texts in a single API call.
+    Supports both OpenAI and GitHub Copilot embedding APIs.
     
     Args:
         texts: List of texts to create embeddings for
@@ -42,13 +50,26 @@ def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
     if not texts:
         return []
     
+    # Check if we should use Copilot embeddings
+    use_copilot = os.getenv("USE_COPILOT_EMBEDDINGS", "false").lower() == "true"
+    
+    if use_copilot:
+        print("Using GitHub Copilot for embeddings...")
+        try:
+            return create_embeddings_batch_copilot(texts)
+        except Exception as e:
+            print(f"Error using Copilot embeddings: {e}")
+            print("Falling back to OpenAI embeddings...")
+            # Fall through to OpenAI implementation
+    
+    # OpenAI implementation (original)
     max_retries = 3
     retry_delay = 1.0  # Start with 1 second delay
     
     for retry in range(max_retries):
         try:
             response = openai.embeddings.create(
-                model="text-embedding-3-small", # Hardcoding embedding model for now, will change this later to be more dynamic
+                model="text-embedding-3-small", # Using text-embedding-3-small (same as Copilot)
                 input=texts
             )
             return [item.embedding for item in response.data]
@@ -81,9 +102,91 @@ def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
                 print(f"Successfully created {successful_count}/{len(texts)} embeddings individually")
                 return embeddings
 
+def create_chat_completion(
+    messages: List[Dict[str, str]],
+    model: Optional[str] = None,
+    temperature: float = 0.3,
+    max_tokens: int = 200,
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Create a chat completion using either OpenAI or GitHub Copilot.
+    Supports both OpenAI and GitHub Copilot chat APIs.
+    
+    Args:
+        messages: List of message dictionaries with 'role' and 'content'
+        model: Model to use (if None, uses MODEL_CHOICE env var)
+        temperature: Temperature for generation
+        max_tokens: Maximum tokens to generate
+        **kwargs: Additional parameters
+        
+    Returns:
+        Chat completion response
+    """
+    # Check if we should use Copilot for chat completions
+    use_copilot = os.getenv("USE_COPILOT_CHAT", "false").lower() == "true"
+    
+    # Get model choice from environment if not specified
+    if model is None:
+        model = os.getenv("MODEL_CHOICE", "gpt-4o-mini")
+    
+    if use_copilot:
+        print("Using GitHub Copilot for chat completion...")
+        try:
+            # Map common OpenAI model names to Copilot equivalents
+            copilot_model = model
+            if "gpt-4o-mini" in model or "gpt-4.1-nano" in model:
+                copilot_model = "gpt-4o"  # Copilot's equivalent
+            
+            return create_chat_completion_copilot(
+                messages=messages,
+                model=copilot_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs
+            )
+        except Exception as e:
+            print(f"Error using Copilot for chat completion: {e}")
+            print("Falling back to OpenAI...")
+            # Fall through to OpenAI implementation
+    
+    # OpenAI implementation
+    try:
+        response = openai.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **kwargs
+        )
+        
+        # Convert OpenAI response to dictionary for consistency
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": response.choices[0].message.content,
+                        "role": response.choices[0].message.role
+                    },
+                    "finish_reason": response.choices[0].finish_reason
+                }
+            ],
+            "model": response.model,
+            "usage": {
+                "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+                "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+                "total_tokens": response.usage.total_tokens if response.usage else 0
+            }
+        }
+    except Exception as e:
+        print(f"Error creating chat completion: {e}")
+        raise
+
+
 def create_embedding(text: str) -> List[float]:
     """
-    Create an embedding for a single text using OpenAI's API.
+    Create an embedding for a single text.
+    Supports both OpenAI and GitHub Copilot embedding APIs.
     
     Args:
         text: Text to create an embedding for
@@ -91,6 +194,17 @@ def create_embedding(text: str) -> List[float]:
     Returns:
         List of floats representing the embedding
     """
+    # Check if we should use Copilot embeddings
+    use_copilot = os.getenv("USE_COPILOT_EMBEDDINGS", "false").lower() == "true"
+    
+    if use_copilot:
+        try:
+            return create_embedding_copilot(text)
+        except Exception as e:
+            print(f"Error using Copilot for single embedding: {e}")
+            print("Falling back to batch method...")
+            # Fall through to batch method
+    
     try:
         embeddings = create_embeddings_batch([text])
         return embeddings[0] if embeddings else [0.0] * 1536
@@ -125,19 +239,19 @@ Here is the chunk we want to situate within the whole document
 </chunk> 
 Please give a short succinct context to situate this chunk within the overall document for the purposes of improving search retrieval of the chunk. Answer only with the succinct context and nothing else."""
 
-        # Call the OpenAI API to generate contextual information
-        response = openai.chat.completions.create(
-            model=model_choice,
+        # Call the chat completion API to generate contextual information
+        response = create_chat_completion(
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that provides concise contextual information."},
                 {"role": "user", "content": prompt}
             ],
+            model=model_choice,
             temperature=0.3,
             max_tokens=200
         )
         
         # Extract the generated context
-        context = response.choices[0].message.content.strip()
+        context = response["choices"][0]["message"]["content"].strip()
         
         # Combine the context with the original chunk
         contextual_text = f"{context}\n---\n{chunk}"
@@ -468,17 +582,17 @@ Based on the code example and its surrounding context, provide a concise summary
 """
     
     try:
-        response = openai.chat.completions.create(
-            model=model_choice,
+        response = create_chat_completion(
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that provides concise code example summaries."},
                 {"role": "user", "content": prompt}
             ],
+            model=model_choice,
             temperature=0.3,
             max_tokens=100
         )
         
-        return response.choices[0].message.content.strip()
+        return response["choices"][0]["message"]["content"].strip()
     
     except Exception as e:
         print(f"Error generating code example summary: {e}")
@@ -662,19 +776,19 @@ The above content is from the documentation for '{source_id}'. Please provide a 
 """
     
     try:
-        # Call the OpenAI API to generate the summary
-        response = openai.chat.completions.create(
-            model=model_choice,
+        # Call the chat completion API to generate the summary
+        response = create_chat_completion(
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that provides concise library/tool/framework summaries."},
                 {"role": "user", "content": prompt}
             ],
+            model=model_choice,
             temperature=0.3,
             max_tokens=150
         )
         
         # Extract the generated summary
-        summary = response.choices[0].message.content.strip()
+        summary = response["choices"][0]["message"]["content"].strip()
         
         # Ensure the summary is not too long
         if len(summary) > max_length:
