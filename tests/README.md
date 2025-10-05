@@ -8,6 +8,7 @@ This directory contains integration tests for the crawl4ai-mcp project, includin
 
 - **`test_neo4j_integration.py`** - Tests Neo4j connection, knowledge graph tools, and repository parsing
 - **`test_copilot_integration.py`** - Tests GitHub Copilot client (embeddings and chat completions)
+- **`test_mcp_server.py`** - Tests MCP server configuration and runtime status
 - **`run_all_tests.py`** - Test runner that executes all integration tests
 
 ### Sample Files
@@ -104,6 +105,16 @@ Individual test files also automatically load `.env` when run directly:
 - ✅ **Chat Completion Tests** - GPT-4o chat model integration
 - ✅ **Utils Integration** - Tests unified embedding/chat functions
 - ✅ **Fallback Behavior** - Ensures OpenAI fallback works when Copilot unavailable
+
+### MCP Server Validation Tests
+
+- ✅ **Process Check** - Verifies MCP server is running
+- ✅ **Configuration Test** - Validates all environment variables
+- ✅ **Database Connectivity** - Tests Supabase and Neo4j configuration
+- ✅ **AI Provider Setup** - Validates GitHub Copilot and OpenAI configuration
+- ✅ **RAG Features** - Confirms all advanced features are enabled
+- ✅ **Tool Availability** - Lists all 8 available MCP tools
+- ✅ **Rate Limiting** - Validates rate limiting configuration
 
 ## Expected Output
 

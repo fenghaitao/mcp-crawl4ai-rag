@@ -63,6 +63,21 @@ def run_copilot_tests():
         print(f"❌ Copilot tests failed: {e}")
         return False
 
+def run_mcp_server_tests():
+    """Run MCP server validation tests."""
+    print("\n" + "=" * 60)
+    print("Running MCP Server Validation Tests")
+    print("=" * 60)
+    
+    try:
+        import asyncio
+        from tests.test_mcp_server import test_full_mcp_server
+        success = asyncio.run(test_full_mcp_server())
+        return success
+    except Exception as e:
+        print(f"❌ MCP server tests failed: {e}")
+        return False
+
 def check_environment():
     """Check environment configuration."""
     print("=" * 60)
@@ -117,6 +132,9 @@ def main():
         return False
     
     results = []
+    
+    # Run MCP server validation first
+    results.append(("MCP Server Validation", run_mcp_server_tests()))
     
     # Run Neo4j tests
     results.append(("Neo4j Integration", run_neo4j_tests()))
