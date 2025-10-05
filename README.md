@@ -267,7 +267,29 @@ USE_COPILOT_EMBEDDINGS=true
 USE_COPILOT_CHAT=true
 MODEL_CHOICE=gpt-4o
 GITHUB_TOKEN=your_github_token
+COPILOT_REQUESTS_PER_MINUTE=60
 ```
+
+### Rate Limiting & Production Features
+
+The GitHub Copilot integration includes enterprise-grade rate limiting and error handling:
+
+#### **Automatic Rate Limiting**
+- **Requests per minute**: Configurable via `COPILOT_REQUESTS_PER_MINUTE` (default: 60)
+- **Burst protection**: Max 10 requests per 10 seconds
+- **Smart throttling**: Automatically waits when limits approached
+
+#### **Error Handling & Resilience**
+- **Exponential backoff**: On 429 rate limit and 5xx server errors
+- **Token refresh**: Automatic refresh on 401 authentication errors
+- **Retry logic**: Smart retry with rate limiting for failed requests
+- **Max backoff**: 30 seconds maximum wait time
+
+#### **Production Ready**
+- **Zero downtime**: Seamless token refresh during operation
+- **Long-running stability**: Handles extended usage without failure
+- **Configurable limits**: Adjust based on your usage patterns
+- **Comprehensive logging**: Clear feedback on rate limiting actions
 
 ### RAG Strategy Options
 

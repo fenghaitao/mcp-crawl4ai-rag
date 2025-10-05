@@ -9,10 +9,83 @@ import httpx
 import os
 import json
 import uuid
+import time
 from pathlib import Path
 from typing import List, Union, Dict, Any, Optional
 from dataclasses import dataclass
 import aiofiles
+
+
+class RateLimiter:
+    """Rate limiter for API requests with exponential backoff."""
+    
+    def __init__(self, requests_per_minute: int = 60, burst_limit: int = 10):
+        """
+        Initialize rate limiter.
+        
+        Args:
+            requests_per_minute: Maximum requests per minute
+            burst_limit: Maximum burst requests before throttling
+        """
+        self.requests_per_minute = requests_per_minute
+        self.burst_limit = burst_limit
+        self.request_times = []
+        self.consecutive_errors = 0
+        self.last_error_time = 0
+        
+    async def wait_if_needed(self) -> None:
+        """Wait if rate limit would be exceeded."""
+        now = time.time()
+        
+        # Remove requests older than 1 minute
+        self.request_times = [t for t in self.request_times if now - t < 60]
+        
+        # Check if we need to wait for rate limit
+        if len(self.request_times) >= self.requests_per_minute:
+            oldest_request = min(self.request_times)
+            sleep_time = 60 - (now - oldest_request)
+            if sleep_time > 0:
+                print(f"Rate limit reached, waiting {sleep_time:.1f} seconds...")
+                await asyncio.sleep(sleep_time)
+                return await self.wait_if_needed()
+        
+        # Check burst limit
+        recent_requests = [t for t in self.request_times if now - t < 10]  # Last 10 seconds
+        if len(recent_requests) >= self.burst_limit:
+            sleep_time = 10 - (now - min(recent_requests))
+            if sleep_time > 0:
+                print(f"Burst limit reached, waiting {sleep_time:.1f} seconds...")
+                await asyncio.sleep(sleep_time)
+                return await self.wait_if_needed()
+        
+        # Exponential backoff for consecutive errors
+        if self.consecutive_errors > 0:
+            backoff_time = min(2 ** self.consecutive_errors, 30)  # Max 30 seconds
+            if now - self.last_error_time < backoff_time:
+                sleep_time = backoff_time - (now - self.last_error_time)
+                print(f"Error backoff, waiting {sleep_time:.1f} seconds...")
+                await asyncio.sleep(sleep_time)
+        
+        # Record this request
+        self.request_times.append(now)
+    
+    def record_success(self) -> None:
+        """Record a successful request."""
+        self.consecutive_errors = 0
+    
+    def record_error(self, status_code: int) -> None:
+        """Record an error and determine backoff."""
+        self.last_error_time = time.time()
+        
+        if status_code == 429:  # Rate limit exceeded
+            self.consecutive_errors += 1
+            print(f"Rate limit error, consecutive errors: {self.consecutive_errors}")
+        elif status_code >= 500:  # Server errors
+            self.consecutive_errors += 1
+            print(f"Server error {status_code}, consecutive errors: {self.consecutive_errors}")
+        else:
+            # Don't increment for client errors (4xx except 429)
+            pass
 
 
 @dataclass
@@ -35,16 +108,23 @@ class CopilotEmbeddingResult:
 class CopilotClient:
     """GitHub Copilot Client for crawl4ai-mcp. Handles both embeddings and chat completions."""
     
-    def __init__(self, github_token: Optional[str] = None):
+    def __init__(self, github_token: Optional[str] = None, requests_per_minute: Optional[int] = None):
         """
         Initialize the Copilot client.
         
         Args:
             github_token: GitHub token. If None, will try to load from environment.
+            requests_per_minute: Rate limit for API requests. If None, loads from COPILOT_REQUESTS_PER_MINUTE env var (default: 60)
         """
         self.github_token = github_token or os.getenv("GITHUB_TOKEN")
         self.copilot_token: Optional[str] = None
         self.vscode_version = "1.85.0"
+        
+        # Get rate limit from environment if not specified
+        if requests_per_minute is None:
+            requests_per_minute = int(os.getenv("COPILOT_REQUESTS_PER_MINUTE", "60"))
+        
+        self.rate_limiter = RateLimiter(requests_per_minute=requests_per_minute)
         
     async def _ensure_authenticated(self) -> None:
         """Ensure we have valid GitHub and Copilot tokens."""
@@ -130,6 +210,9 @@ class CopilotClient:
             "model": model
         }
         
+        # Rate limiting
+        await self.rate_limiter.wait_if_needed()
+        
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self._get_copilot_base_url(account_type)}/embeddings",
@@ -139,11 +222,16 @@ class CopilotClient:
             )
             
             if not response.is_success:
+                self.rate_limiter.record_error(response.status_code)
+                
                 # If token is expired, clear it and retry once
                 if response.status_code == 401:
                     print("Copilot token expired, refreshing...")
                     self.copilot_token = None
                     await self._ensure_authenticated()
+                    
+                    # Rate limit the retry as well
+                    await self.rate_limiter.wait_if_needed()
                     
                     response = await client.post(
                         f"{self._get_copilot_base_url(account_type)}/embeddings",
@@ -153,7 +241,11 @@ class CopilotClient:
                     )
                 
                 if not response.is_success:
+                    self.rate_limiter.record_error(response.status_code)
                     raise Exception(f"Failed to create embeddings: {response.status_code} {response.text}")
+            
+            # Record successful request
+            self.rate_limiter.record_success()
             
             data = response.json()
             
@@ -190,7 +282,7 @@ class CopilotClient:
                 result = await self.create_embeddings(batch)
                 all_embeddings.extend(result.embeddings)
                 
-                # Small delay between batches to avoid rate limiting
+                # Small delay between batches (rate limiter handles the main throttling)
                 if i + batch_size < len(texts):
                     await asyncio.sleep(0.1)
                     
@@ -252,6 +344,9 @@ class CopilotClient:
             **kwargs
         }
         
+        # Rate limiting
+        await self.rate_limiter.wait_if_needed()
+        
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self._get_copilot_base_url(account_type)}/chat/completions",
@@ -261,11 +356,16 @@ class CopilotClient:
             )
             
             if not response.is_success:
+                self.rate_limiter.record_error(response.status_code)
+                
                 # If token is expired, clear it and retry once
                 if response.status_code == 401:
                     print("Copilot token expired, refreshing...")
                     self.copilot_token = None
                     await self._ensure_authenticated()
+                    
+                    # Rate limit the retry as well
+                    await self.rate_limiter.wait_if_needed()
                     
                     response = await client.post(
                         f"{self._get_copilot_base_url(account_type)}/chat/completions",
@@ -275,7 +375,11 @@ class CopilotClient:
                     )
                 
                 if not response.is_success:
+                    self.rate_limiter.record_error(response.status_code)
                     raise Exception(f"Failed to create chat completion: {response.status_code} {response.text}")
+            
+            # Record successful request
+            self.rate_limiter.record_success()
             
             return response.json()
 
