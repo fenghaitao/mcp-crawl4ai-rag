@@ -21,6 +21,81 @@ except ImportError:
 # Load OpenAI API key for embeddings
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
+# Global variable for Qwen embedding model (lazy loading)
+_qwen_embedding_model = None
+
+def get_qwen_embedding_model():
+    """
+    Get the Qwen embedding model (lazy loading).
+    
+    Returns:
+        SentenceTransformer model or None if not available
+    """
+    global _qwen_embedding_model
+    
+    if _qwen_embedding_model is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            import torch
+            
+            # Force CPU usage
+            device = "cpu"
+            print(f"Loading Qwen embedding model on {device}...")
+            
+            # Load the model
+            _qwen_embedding_model = SentenceTransformer(
+                "Qwen/Qwen3-Embedding-0.6B",
+                device=device,
+                trust_remote_code=True
+            )
+            print("✓ Qwen embedding model loaded successfully")
+            
+        except Exception as e:
+            print(f"Failed to load Qwen embedding model: {e}")
+            _qwen_embedding_model = "failed"  # Mark as failed to avoid repeated attempts
+    
+    return _qwen_embedding_model if _qwen_embedding_model != "failed" else None
+
+def create_embeddings_batch_qwen(texts: List[str]) -> List[List[float]]:
+    """
+    Create embeddings using the local Qwen model.
+    
+    Args:
+        texts: List of texts to create embeddings for
+        
+    Returns:
+        List of embeddings (each embedding is a list of floats)
+    """
+    if not texts:
+        return []
+    
+    model = get_qwen_embedding_model()
+    if model is None:
+        print("Qwen model not available, returning zero embeddings")
+        return [[0.0] * 1536 for _ in texts]  # Return default size embeddings
+    
+    try:
+        print(f"Creating embeddings for {len(texts)} texts using Qwen model...")
+        embeddings = model.encode(texts, convert_to_numpy=True)
+        # Convert numpy arrays to lists
+        return [embedding.tolist() for embedding in embeddings]
+    except Exception as e:
+        print(f"Error creating Qwen embeddings: {e}")
+        return [[0.0] * 1536 for _ in texts]
+
+def create_embedding_qwen(text: str) -> List[float]:
+    """
+    Create a single embedding using the local Qwen model.
+    
+    Args:
+        text: Text to create an embedding for
+        
+    Returns:
+        List of floats representing the embedding
+    """
+    embeddings = create_embeddings_batch_qwen([text])
+    return embeddings[0] if embeddings else [0.0] * 1536
+
 def get_supabase_client() -> Client:
     """
     Get a Supabase client with the URL and key from environment variables.
@@ -39,7 +114,7 @@ def get_supabase_client() -> Client:
 def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
     """
     Create embeddings for multiple texts in a single API call.
-    Supports both OpenAI and GitHub Copilot embedding APIs.
+    Supports OpenAI, GitHub Copilot, and local Qwen embedding models.
     
     Args:
         texts: List of texts to create embeddings for
@@ -50,8 +125,18 @@ def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
     if not texts:
         return []
     
-    # Check if we should use Copilot embeddings
+    # Check embedding preference order: Qwen -> Copilot -> OpenAI
+    use_qwen = os.getenv("USE_QWEN_EMBEDDINGS", "false").lower() == "true"
     use_copilot = os.getenv("USE_COPILOT_EMBEDDINGS", "false").lower() == "true"
+    
+    if use_qwen:
+        print("Using local Qwen model for embeddings...")
+        try:
+            return create_embeddings_batch_qwen(texts)
+        except Exception as e:
+            print(f"Error using Qwen embeddings: {e}")
+            print("Falling back to next available option...")
+            # Fall through to next option
     
     if use_copilot:
         print("Using GitHub Copilot for embeddings...")
@@ -62,7 +147,8 @@ def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
             print("Falling back to OpenAI embeddings...")
             # Fall through to OpenAI implementation
     
-    # OpenAI implementation (original)
+    # OpenAI implementation (fallback)
+    print("Using OpenAI for embeddings...")
     max_retries = 3
     retry_delay = 1.0  # Start with 1 second delay
     
@@ -186,7 +272,7 @@ def create_chat_completion(
 def create_embedding(text: str) -> List[float]:
     """
     Create an embedding for a single text.
-    Supports both OpenAI and GitHub Copilot embedding APIs.
+    Supports OpenAI, GitHub Copilot, and local Qwen embedding models.
     
     Args:
         text: Text to create an embedding for
@@ -194,8 +280,17 @@ def create_embedding(text: str) -> List[float]:
     Returns:
         List of floats representing the embedding
     """
-    # Check if we should use Copilot embeddings
+    # Check embedding preference order: Qwen -> Copilot -> OpenAI
+    use_qwen = os.getenv("USE_QWEN_EMBEDDINGS", "false").lower() == "true"
     use_copilot = os.getenv("USE_COPILOT_EMBEDDINGS", "false").lower() == "true"
+    
+    if use_qwen:
+        try:
+            return create_embedding_qwen(text)
+        except Exception as e:
+            print(f"Error using Qwen for single embedding: {e}")
+            print("Falling back to batch method...")
+            # Fall through to batch method
     
     if use_copilot:
         try:
