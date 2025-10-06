@@ -454,9 +454,11 @@ def create_embeddings_batch_copilot(texts: List[str]) -> List[List[float]]:
         # Check if we're already in an event loop
         try:
             loop = asyncio.get_running_loop()
-            # If we get here, we're in an event loop, so we can't use asyncio.run()
-            print("Already in event loop, cannot use Copilot embeddings in this context")
-            return [[0.0] * 1536 for _ in texts]
+            # If we get here, we're in an event loop, so we need to run in a thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, _create())
+                return future.result()
         except RuntimeError:
             # No event loop running, safe to use asyncio.run()
             return asyncio.run(_create())
@@ -491,9 +493,11 @@ def create_embedding_copilot(text: str) -> List[float]:
         # Check if we're already in an event loop
         try:
             loop = asyncio.get_running_loop()
-            # If we get here, we're in an event loop, so we can't use asyncio.run()
-            print("Already in event loop, cannot use Copilot single embedding in this context")
-            return [0.0] * 1536
+            # If we get here, we're in an event loop, so we need to run in a thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, _create())
+                return future.result()
         except RuntimeError:
             # No event loop running, safe to use asyncio.run()
             return asyncio.run(_create())
@@ -543,9 +547,11 @@ def create_chat_completion_copilot(
         # Check if we're already in an event loop
         try:
             loop = asyncio.get_running_loop()
-            # If we get here, we're in an event loop, so we can't use asyncio.run()
-            print("Already in event loop, cannot use Copilot chat completion in this context")
-            raise Exception("Cannot use Copilot chat in event loop context")
+            # If we get here, we're in an event loop, so we need to run in a thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, _create())
+                return future.result()
         except RuntimeError:
             # No event loop running, safe to use asyncio.run()
             return asyncio.run(_create())
