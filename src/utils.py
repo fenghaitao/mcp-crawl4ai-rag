@@ -36,9 +36,46 @@ def get_supabase_client() -> Client:
     
     return create_client(url, key)
 
+async def create_embeddings_batch_async(texts: List[str]) -> List[List[float]]:
+    """
+    Async version: Create embeddings for multiple texts in a single API call.
+    Supports both OpenAI and GitHub Copilot embedding APIs.
+    
+    Args:
+        texts: List of texts to create embeddings for
+        
+    Returns:
+        List of embeddings (each embedding is a list of floats)
+    """
+    if not texts:
+        return []
+    
+    # Check if we should use Copilot embeddings
+    use_copilot = os.getenv("USE_COPILOT_EMBEDDINGS", "false").lower() == "true"
+    
+    if use_copilot:
+        print("Using GitHub Copilot for embeddings...")
+        try:
+            # Import here to avoid circular imports
+            from .copilot_client import get_copilot_client
+            
+            client = await get_copilot_client()
+            if client is None:
+                print("Copilot client not available, falling back to OpenAI embeddings")
+            else:
+                return await client.create_embeddings_batch(texts)
+        except Exception as e:
+            print(f"Error using Copilot embeddings: {e}")
+            print("Falling back to OpenAI embeddings...")
+            # Fall through to OpenAI implementation
+    
+    # OpenAI implementation (convert to async)
+    return await _create_openai_embeddings_batch(texts)
+
+
 def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
     """
-    Create embeddings for multiple texts in a single API call.
+    Sync wrapper: Create embeddings for multiple texts in a single API call.
     Supports both OpenAI and GitHub Copilot embedding APIs.
     
     Args:
@@ -63,6 +100,23 @@ def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
             # Fall through to OpenAI implementation
     
     # OpenAI implementation (original)
+    return _create_openai_embeddings_batch_sync(texts)
+
+
+async def _create_openai_embeddings_batch(texts: List[str]) -> List[List[float]]:
+    """
+    Async helper function for creating OpenAI embeddings.
+    """
+    import asyncio
+    
+    # Use asyncio.to_thread to run the sync OpenAI call in a thread
+    return await asyncio.to_thread(_create_openai_embeddings_batch_sync, texts)
+
+
+def _create_openai_embeddings_batch_sync(texts: List[str]) -> List[List[float]]:
+    """
+    Synchronous helper function for creating OpenAI embeddings.
+    """
     max_retries = 3
     retry_delay = 1.0  # Start with 1 second delay
     
@@ -183,9 +237,47 @@ def create_chat_completion(
         raise
 
 
+async def create_embedding_async(text: str) -> List[float]:
+    """
+    Async version: Create an embedding for a single text.
+    Supports both OpenAI and GitHub Copilot embedding APIs.
+    
+    Args:
+        text: Text to create an embedding for
+        
+    Returns:
+        List of floats representing the embedding
+    """
+    # Check if we should use Copilot embeddings
+    use_copilot = os.getenv("USE_COPILOT_EMBEDDINGS", "false").lower() == "true"
+    
+    if use_copilot:
+        try:
+            # Import here to avoid circular imports
+            from .copilot_client import get_copilot_client
+            
+            client = await get_copilot_client()
+            if client is None:
+                print("Copilot client not available, falling back to batch method")
+            else:
+                embeddings = await client.create_embeddings_batch([text])
+                return embeddings[0] if embeddings else [0.0] * 1536
+        except Exception as e:
+            print(f"Error using Copilot for single embedding: {e}")
+            print("Falling back to batch method...")
+            # Fall through to batch method
+    
+    try:
+        embeddings = await create_embeddings_batch_async([text])
+        return embeddings[0] if embeddings else [0.0] * 1536
+    except Exception as e:
+        print(f"Error creating embedding: {e}")
+        # Return empty embedding if there's an error
+        return [0.0] * 1536
+
 def create_embedding(text: str) -> List[float]:
     """
-    Create an embedding for a single text.
+    Sync wrapper: Create an embedding for a single text.
     Supports both OpenAI and GitHub Copilot embedding APIs.
     
     Args:
@@ -278,7 +370,7 @@ def process_chunk_with_context(args):
     url, content, full_document = args
     return generate_contextual_embedding(full_document, content)
 
-def add_documents_to_supabase(
+async def add_documents_to_supabase(
     client: Client, 
     urls: List[str], 
     chunk_numbers: List[int],
@@ -371,7 +463,7 @@ def add_documents_to_supabase(
             contextual_contents = batch_contents
         
         # Create embeddings for the entire batch at once
-        batch_embeddings = create_embeddings_batch(contextual_contents)
+        batch_embeddings = await create_embeddings_batch_async(contextual_contents)
         
         batch_data = []
         for j in range(len(contextual_contents)):
@@ -428,6 +520,46 @@ def add_documents_to_supabase(
                     if successful_inserts > 0:
                         print(f"Successfully inserted {successful_inserts}/{len(batch_data)} records individually")
 
+async def search_documents_async(
+    client: Client, 
+    query: str, 
+    match_count: int = 10, 
+    filter_metadata: Optional[Dict[str, Any]] = None
+) -> List[Dict[str, Any]]:
+    """
+    Async version: Search for documents in Supabase using vector similarity.
+    
+    Args:
+        client: Supabase client
+        query: Query text
+        match_count: Maximum number of results to return
+        filter_metadata: Optional metadata filter
+        
+    Returns:
+        List of matching documents
+    """
+    # Create embedding for the query
+    query_embedding = await create_embedding_async(query)
+    
+    # Execute the search using the match_crawled_pages function
+    try:
+        # Only include filter parameter if filter_metadata is provided and not empty
+        params = {
+            'query_embedding': query_embedding,
+            'match_count': match_count
+        }
+        
+        # Only add the filter if it's actually provided and not empty
+        if filter_metadata:
+            params['filter'] = filter_metadata  # Pass the dictionary directly, not JSON-encoded
+        
+        result = client.rpc('match_crawled_pages', params).execute()
+        
+        return result.data
+    except Exception as e:
+        print(f"Error searching documents: {e}")
+        return []
+
 def search_documents(
     client: Client, 
     query: str, 
@@ -435,7 +567,7 @@ def search_documents(
     filter_metadata: Optional[Dict[str, Any]] = None
 ) -> List[Dict[str, Any]]:
     """
-    Search for documents in Supabase using vector similarity.
+    Sync wrapper: Search for documents in Supabase using vector similarity.
     
     Args:
         client: Supabase client
@@ -599,7 +731,7 @@ Based on the code example and its surrounding context, provide a concise summary
         return "Code example for demonstration purposes."
 
 
-def add_code_examples_to_supabase(
+async def add_code_examples_to_supabase(
     client: Client,
     urls: List[str],
     chunk_numbers: List[int],
@@ -643,7 +775,7 @@ def add_code_examples_to_supabase(
             batch_texts.append(combined_text)
         
         # Create embeddings for the batch
-        embeddings = create_embeddings_batch(batch_texts)
+        embeddings = await create_embeddings_batch_async(batch_texts)
         
         # Check if embeddings are valid (not all zeros)
         valid_embeddings = []
@@ -653,7 +785,7 @@ def add_code_examples_to_supabase(
             else:
                 print(f"Warning: Zero or invalid embedding detected, creating new one...")
                 # Try to create a single embedding as fallback
-                single_embedding = create_embedding(batch_texts[len(valid_embeddings)])
+                single_embedding = await create_embedding_async(batch_texts[len(valid_embeddings)])
                 valid_embeddings.append(single_embedding)
         
         # Prepare batch data
@@ -708,9 +840,46 @@ def add_code_examples_to_supabase(
         print(f"Inserted batch {i//batch_size + 1} of {(total_items + batch_size - 1)//batch_size} code examples")
 
 
+async def update_source_info_async(client: Client, source_id: str, summary: str, word_count: int):
+    """
+    Async version: Update or insert source information in the sources table.
+    
+    Args:
+        client: Supabase client
+        source_id: The source ID (domain)
+        summary: Summary of the source
+        word_count: Total word count for the source
+    """
+    def _update_source_sync():
+        try:
+            # Try to update existing source
+            result = client.table('sources').update({
+                'summary': summary,
+                'total_word_count': word_count,
+                'updated_at': 'now()'
+            }).eq('source_id', source_id).execute()
+            
+            # If no rows were updated, insert new source
+            if not result.data:
+                client.table('sources').insert({
+                    'source_id': source_id,
+                    'summary': summary,
+                    'total_word_count': word_count
+                }).execute()
+                print(f"Created new source: {source_id}")
+            else:
+                print(f"Updated source: {source_id}")
+                
+        except Exception as e:
+            print(f"Error updating source {source_id}: {e}")
+    
+    # Run the synchronous database operation in a thread
+    await asyncio.to_thread(_update_source_sync)
+
+
 def update_source_info(client: Client, source_id: str, summary: str, word_count: int):
     """
-    Update or insert source information in the sources table.
+    Sync wrapper: Update or insert source information in the sources table.
     
     Args:
         client: Supabase client
@@ -801,6 +970,56 @@ The above content is from the documentation for '{source_id}'. Please provide a 
         return default_summary
 
 
+async def search_code_examples_async(
+    client: Client, 
+    query: str, 
+    match_count: int = 10, 
+    filter_metadata: Optional[Dict[str, Any]] = None,
+    source_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Async version: Search for code examples in Supabase using vector similarity.
+    
+    Args:
+        client: Supabase client
+        query: Query text
+        match_count: Maximum number of results to return
+        filter_metadata: Optional metadata filter
+        source_id: Optional source ID to filter results
+        
+    Returns:
+        List of matching code examples
+    """
+    # Create a more descriptive query for better embedding match
+    # Since code examples are embedded with their summaries, we should make the query more descriptive
+    enhanced_query = f"Code example for {query}\n\nSummary: Example code showing {query}"
+    
+    # Create embedding for the enhanced query
+    query_embedding = await create_embedding_async(enhanced_query)
+    
+    # Execute the search using the match_code_examples function
+    try:
+        # Only include filter parameter if filter_metadata is provided and not empty
+        params = {
+            'query_embedding': query_embedding,
+            'match_count': match_count
+        }
+        
+        # Only add the filter if it's actually provided and not empty
+        if filter_metadata:
+            params['filter'] = filter_metadata
+            
+        # Add source filter if provided
+        if source_id:
+            params['source_filter'] = source_id
+        
+        result = client.rpc('match_code_examples', params).execute()
+        
+        return result.data
+    except Exception as e:
+        print(f"Error searching code examples: {e}")
+        return []
+
 def search_code_examples(
     client: Client, 
     query: str, 
@@ -809,7 +1028,7 @@ def search_code_examples(
     source_id: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
-    Search for code examples in Supabase using vector similarity.
+    Sync wrapper: Search for code examples in Supabase using vector similarity.
     
     Args:
         client: Supabase client

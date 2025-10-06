@@ -33,13 +33,13 @@ sys.path.append(str(knowledge_graphs_path))
 from utils import (
     get_supabase_client, 
     add_documents_to_supabase, 
-    search_documents,
+    search_documents_async,
     extract_code_blocks,
     generate_code_example_summary,
     add_code_examples_to_supabase,
-    update_source_info,
+    update_source_info_async,
     extract_source_summary,
-    search_code_examples
+    search_code_examples_async
 )
 
 # Import knowledge graph modules
@@ -133,27 +133,65 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
     Yields:
         Crawl4AIContext: The context containing the Crawl4AI crawler and Supabase client
     """
+    print("🚀 Starting MCP server initialization...")
+    
     # Create browser configuration
+    print("⚙️  Creating browser configuration...")
     browser_config = BrowserConfig(
         headless=True,
         verbose=False
     )
     
     # Initialize the crawler
+    print("🌐 Initializing web crawler...")
     crawler = AsyncWebCrawler(config=browser_config)
-    await crawler.__aenter__()
+    try:
+        await asyncio.wait_for(crawler.__aenter__(), timeout=30.0)
+        print("✅ Web crawler initialized successfully")
+    except asyncio.TimeoutError:
+        print("❌ Web crawler initialization timed out (30s)")
+        raise
+    except Exception as e:
+        print(f"❌ Web crawler initialization failed: {e}")
+        raise
     
-    # Initialize Supabase client
-    supabase_client = get_supabase_client()
+    # Initialize Supabase client (run in thread to avoid blocking)
+    print("🗄️  Initializing Supabase client...")
+    try:
+        supabase_client = await asyncio.wait_for(
+            asyncio.to_thread(get_supabase_client), 
+            timeout=10.0
+        )
+        print("✅ Supabase client initialized successfully")
+    except asyncio.TimeoutError:
+        print("❌ Supabase client initialization timed out (10s)")
+        raise
+    except Exception as e:
+        print(f"❌ Supabase client initialization failed: {e}")
+        raise
     
-    # Initialize cross-encoder model for reranking if enabled
+    # Initialize cross-encoder model for reranking if enabled (run in thread to avoid blocking)
     reranking_model = None
-    if os.getenv("USE_RERANKING", "false") == "true":
+    fast_init = os.getenv("FAST_INIT", "false") == "true"
+    
+    if os.getenv("USE_RERANKING", "false") == "true" and not fast_init:
+        print("🧠 Loading reranking model...")
         try:
-            reranking_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-        except Exception as e:
-            print(f"Failed to load reranking model: {e}")
+            reranking_model = await asyncio.wait_for(
+                asyncio.to_thread(lambda: CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")),
+                timeout=60.0
+            )
+            print("✅ Reranking model loaded successfully")
+        except asyncio.TimeoutError:
+            print("⚠️  Reranking model loading timed out (60s) - continuing without reranking")
             reranking_model = None
+        except Exception as e:
+            print(f"⚠️  Failed to load reranking model: {e} - continuing without reranking")
+            reranking_model = None
+    elif fast_init:
+        print("⚡ Fast initialization mode - skipping reranking model")
+    else:
+        print("ℹ️  Reranking disabled")
     
     # Initialize Neo4j components if configured and enabled
     knowledge_validator = None
@@ -162,33 +200,42 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
     # Check if knowledge graph functionality is enabled
     knowledge_graph_enabled = os.getenv("USE_KNOWLEDGE_GRAPH", "false") == "true"
     
-    if knowledge_graph_enabled:
+    if knowledge_graph_enabled and not fast_init:
+        print("🔗 Knowledge graph functionality enabled")
         neo4j_uri = os.getenv("NEO4J_URI")
         neo4j_user = os.getenv("NEO4J_USER")
         neo4j_password = os.getenv("NEO4J_PASSWORD")
         
         if neo4j_uri and neo4j_user and neo4j_password:
             try:
-                print("Initializing knowledge graph components...")
+                print("🔗 Initializing knowledge graph components...")
                 
-                # Initialize knowledge graph validator
+                # Initialize knowledge graph validator with timeout
                 knowledge_validator = KnowledgeGraphValidator(neo4j_uri, neo4j_user, neo4j_password)
-                await knowledge_validator.initialize()
-                print("✓ Knowledge graph validator initialized")
+                await asyncio.wait_for(knowledge_validator.initialize(), timeout=15.0)
+                print("✅ Knowledge graph validator initialized")
                 
-                # Initialize repository extractor
+                # Initialize repository extractor with timeout
                 repo_extractor = DirectNeo4jExtractor(neo4j_uri, neo4j_user, neo4j_password)
-                await repo_extractor.initialize()
-                print("✓ Repository extractor initialized")
+                await asyncio.wait_for(repo_extractor.initialize(), timeout=15.0)
+                print("✅ Repository extractor initialized")
                 
+            except asyncio.TimeoutError:
+                print("⚠️  Neo4j initialization timed out (15s) - knowledge graph tools will be unavailable")
+                knowledge_validator = None
+                repo_extractor = None
             except Exception as e:
-                print(f"Failed to initialize Neo4j components: {format_neo4j_error(e)}")
+                print(f"⚠️  Failed to initialize Neo4j components: {format_neo4j_error(e)}")
                 knowledge_validator = None
                 repo_extractor = None
         else:
-            print("Neo4j credentials not configured - knowledge graph tools will be unavailable")
+            print("ℹ️  Neo4j credentials not configured - knowledge graph tools will be unavailable")
+    elif fast_init and knowledge_graph_enabled:
+        print("⚡ Fast initialization mode - skipping knowledge graph components")
     else:
-        print("Knowledge graph functionality disabled - set USE_KNOWLEDGE_GRAPH=true to enable")
+        print("ℹ️  Knowledge graph functionality disabled - set USE_KNOWLEDGE_GRAPH=true to enable")
+    
+    print("🎉 MCP server initialization complete!")
     
     try:
         yield Crawl4AIContext(
@@ -220,7 +267,7 @@ mcp = FastMCP(
     description="MCP server for RAG and web crawling with Crawl4AI",
     lifespan=crawl4ai_lifespan,
     host=os.getenv("HOST", "0.0.0.0"),
-    port=os.getenv("PORT", "8051")
+    port=int(os.getenv("PORT", "8051"))
 )
 
 def rerank_results(model: CrossEncoder, query: str, results: List[Dict[str, Any]], content_key: str = "content") -> List[Dict[str, Any]]:
@@ -447,10 +494,10 @@ async def crawl_single_page(ctx: Context, url: str) -> str:
             
             # Update source information FIRST (before inserting documents)
             source_summary = extract_source_summary(source_id, result.markdown[:5000])  # Use first 5000 chars for summary
-            update_source_info(supabase_client, source_id, source_summary, total_word_count)
+            await update_source_info_async(supabase_client, source_id, source_summary, total_word_count)
             
             # Add documentation chunks to Supabase (AFTER source exists)
-            add_documents_to_supabase(supabase_client, urls, chunk_numbers, contents, metadatas, url_to_full_document)
+            await add_documents_to_supabase(supabase_client, urls, chunk_numbers, contents, metadatas, url_to_full_document)
             
             # Extract and process code examples only if enabled
             extract_code_examples = os.getenv("USE_AGENTIC_RAG", "false") == "true"
@@ -490,7 +537,7 @@ async def crawl_single_page(ctx: Context, url: str) -> str:
                         code_metadatas.append(code_meta)
                     
                     # Add code examples to Supabase
-                    add_code_examples_to_supabase(
+                    await add_code_examples_to_supabase(
                         supabase_client, 
                         code_urls, 
                         code_chunk_numbers, 
@@ -640,19 +687,19 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
         
         for (source_id, _), summary in zip(source_summary_args, source_summaries):
             word_count = source_word_counts.get(source_id, 0)
-            update_source_info(supabase_client, source_id, summary, word_count)
+            await update_source_info_async(supabase_client, source_id, summary, word_count)
         
         # Add documentation chunks to Supabase (AFTER sources exist)
         batch_size = 20
-        add_documents_to_supabase(supabase_client, urls, chunk_numbers, contents, metadatas, url_to_full_document, batch_size=batch_size)
+        await add_documents_to_supabase(supabase_client, urls, chunk_numbers, contents, metadatas, url_to_full_document, batch_size=batch_size)
         
         # Extract and process code examples from all documents only if enabled
+        code_examples = []  # Initialize outside the if block to avoid undefined variable
         extract_code_examples_enabled = os.getenv("USE_AGENTIC_RAG", "false") == "true"
         if extract_code_examples_enabled:
             all_code_blocks = []
             code_urls = []
             code_chunk_numbers = []
-            code_examples = []
             code_summaries = []
             code_metadatas = []
             
@@ -694,7 +741,7 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
             
             # Add all code examples to Supabase
             if code_examples:
-                add_code_examples_to_supabase(
+                await add_code_examples_to_supabase(
                     supabase_client, 
                     code_urls, 
                     code_chunk_numbers, 
@@ -806,7 +853,7 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
             # Hybrid search: combine vector and keyword search
             
             # 1. Get vector search results (get more to account for filtering)
-            vector_results = search_documents(
+            vector_results = await search_documents_async(
                 client=supabase_client,
                 query=query,
                 match_count=match_count * 2,  # Get double to have room for filtering
@@ -869,7 +916,7 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
             
         else:
             # Standard vector search only
-            results = search_documents(
+            results = await search_documents_async(
                 client=supabase_client,
                 query=query,
                 match_count=match_count,
@@ -955,10 +1002,10 @@ async def search_code_examples(ctx: Context, query: str, source_id: str = None, 
             # Hybrid search: combine vector and keyword search
             
             # Import the search function from utils
-            from utils import search_code_examples as search_code_examples_impl
+            from utils import search_code_examples_async as search_code_examples_impl
             
             # 1. Get vector search results (get more to account for filtering)
-            vector_results = search_code_examples_impl(
+            vector_results = await search_code_examples_impl(
                 client=supabase_client,
                 query=query,
                 match_count=match_count * 2,  # Get double to have room for filtering
@@ -1022,9 +1069,9 @@ async def search_code_examples(ctx: Context, query: str, source_id: str = None, 
             
         else:
             # Standard vector search only
-            from utils import search_code_examples as search_code_examples_impl
+            from utils import search_code_examples_async as search_code_examples_impl
             
-            results = search_code_examples_impl(
+            results = await search_code_examples_impl(
                 client=supabase_client,
                 query=query,
                 match_count=match_count,
