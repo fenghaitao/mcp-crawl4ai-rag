@@ -146,14 +146,38 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
     # Initialize Supabase client
     supabase_client = get_supabase_client()
     
-    # Initialize cross-encoder model for reranking if enabled
+    # Initialize reranking model if enabled
     reranking_model = None
+    reranking_model_name = None
     if os.getenv("USE_RERANKING", "false") == "true":
-        try:
-            reranking_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-        except Exception as e:
-            print(f"Failed to load reranking model: {e}")
-            reranking_model = None
+        # Check which reranker model to use
+        use_qwen_reranker = os.getenv("USE_QWEN_RERANKER", "false").lower() == "true"
+        
+        if use_qwen_reranker:
+            try:
+                print("Loading Qwen reranker model...")
+                reranking_model = CrossEncoder("Qwen/Qwen3-Reranker-0.6B", device="cpu", trust_remote_code=True)
+                reranking_model_name = "Qwen/Qwen3-Reranker-0.6B"
+                print("✓ Qwen reranker model loaded successfully")
+            except Exception as e:
+                print(f"Failed to load Qwen reranker model: {e}")
+                print("Falling back to CrossEncoder model...")
+                try:
+                    reranking_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+                    reranking_model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+                    print("✓ CrossEncoder fallback model loaded successfully")
+                except Exception as fallback_e:
+                    print(f"Failed to load fallback reranking model: {fallback_e}")
+                    reranking_model = None
+        else:
+            try:
+                print("Loading CrossEncoder reranker model...")
+                reranking_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+                reranking_model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+                print("✓ CrossEncoder reranker model loaded successfully")
+            except Exception as e:
+                print(f"Failed to load CrossEncoder reranking model: {e}")
+                reranking_model = None
     
     # Initialize Neo4j components if configured and enabled
     knowledge_validator = None
@@ -189,6 +213,47 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
             print("Neo4j credentials not configured - knowledge graph tools will be unavailable")
     else:
         print("Knowledge graph functionality disabled - set USE_KNOWLEDGE_GRAPH=true to enable")
+    
+    # Print configuration summary and ready message
+    print("\n" + "="*60)
+    print("🚀 MCP Crawl4AI RAG Server Initialization Complete!")
+    print("="*60)
+    
+    # Show active configuration
+    embedding_provider = "OpenAI"
+    embedding_model = "text-embedding-3-small"  # Default OpenAI model
+    
+    if os.getenv("USE_QWEN_EMBEDDINGS", "false").lower() == "true":
+        embedding_provider = "Qwen (Local)"
+        embedding_model = "Qwen/Qwen3-Embedding-0.6B"
+    elif os.getenv("USE_COPILOT_EMBEDDINGS", "false").lower() == "true":
+        embedding_provider = "GitHub Copilot"
+        embedding_model = "text-embedding-3-small"  # Copilot uses same as OpenAI
+    
+    # Check chat model configuration
+    chat_provider = "OpenAI (Default)"
+    if os.getenv("USE_COPILOT_CHAT", "false").lower() == "true":
+        chat_provider = "GitHub Copilot"
+    
+    # Check model choice configuration
+    model_choice = os.getenv("MODEL_CHOICE", "gpt-4o-mini")  # Default model
+    
+    # Check reranking model
+    reranking_status = "Disabled"
+    if reranking_model and reranking_model_name:
+        reranking_status = reranking_model_name
+    
+    print(f"📊 Embedding Provider: {embedding_provider}")
+    print(f"🔗 Embedding Model: {embedding_model}")
+    print(f"💬 Chat Model Provider: {chat_provider}")
+    print(f"🤖 Model Choice: {model_choice}")
+    print(f"🔍 Reranking Model: {reranking_status}")
+    print(f"🧠 Knowledge Graph: {'Enabled' if knowledge_validator else 'Disabled'}")
+    print(f"🗄️  Supabase: {'Connected' if supabase_client else 'Not Connected'}")
+    
+    print("\n✅ Server is ready to accept connections!")
+    print("💡 Connect your MCP client to start using RAG and web crawling tools.")
+    print("="*60 + "\n")
     
     try:
         yield Crawl4AIContext(
@@ -791,29 +856,46 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
         JSON string with the search results
     """
     try:
+        print(f"\n🔍 RAG Query Starting:")
+        print(f"   Query: '{query}'")
+        print(f"   Source filter: {source if source else 'None'}")
+        print(f"   Match count: {match_count}")
+        
         # Get the Supabase client from the context
         supabase_client = ctx.request_context.lifespan_context.supabase_client
         
-        # Check if hybrid search is enabled
+        # Check configuration settings
         use_hybrid_search = os.getenv("USE_HYBRID_SEARCH", "false") == "true"
+        use_reranking = os.getenv("USE_RERANKING", "false") == "true"
+        reranking_model = ctx.request_context.lifespan_context.reranking_model
+        
+        print(f"📊 Configuration:")
+        print(f"   Hybrid search: {'✅ Enabled' if use_hybrid_search else '❌ Disabled'}")
+        print(f"   Reranking: {'✅ Enabled' if use_reranking else '❌ Disabled'}")
+        print(f"   Reranking model loaded: {'✅ Yes' if reranking_model else '❌ No'}")
         
         # Prepare filter if source is provided and not empty
         filter_metadata = None
         if source and source.strip():
             filter_metadata = {"source": source}
+            print(f"🎯 Source filtering applied: {source}")
         
         if use_hybrid_search:
             # Hybrid search: combine vector and keyword search
+            print(f"🔄 Using hybrid search (vector + keyword)")
             
             # 1. Get vector search results (get more to account for filtering)
+            print(f"   🎯 Performing vector search (requesting {match_count * 2} results)...")
             vector_results = search_documents(
                 client=supabase_client,
                 query=query,
                 match_count=match_count * 2,  # Get double to have room for filtering
                 filter_metadata=filter_metadata
             )
+            print(f"   ✅ Vector search returned {len(vector_results)} results")
             
             # 2. Get keyword search results using ILIKE
+            print(f"   🔤 Performing keyword search...")
             keyword_query = supabase_client.from_('crawled_pages')\
                 .select('id, url, chunk_number, content, metadata, source_id')\
                 .ilike('content', f'%{query}%')
@@ -825,13 +907,16 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
             # Execute keyword search
             keyword_response = keyword_query.limit(match_count * 2).execute()
             keyword_results = keyword_response.data if keyword_response.data else []
+            print(f"   ✅ Keyword search returned {len(keyword_results)} results")
             
             # 3. Combine results with preference for items appearing in both
+            print(f"   🔗 Combining vector and keyword results...")
             seen_ids = set()
             combined_results = []
             
             # First, add items that appear in both searches (these are the best matches)
             vector_ids = {r.get('id') for r in vector_results if r.get('id')}
+            both_searches_count = 0
             for kr in keyword_results:
                 if kr['id'] in vector_ids and kr['id'] not in seen_ids:
                     # Find the vector result to get similarity score
@@ -841,15 +926,19 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
                             vr['similarity'] = min(1.0, vr.get('similarity', 0) * 1.2)
                             combined_results.append(vr)
                             seen_ids.add(kr['id'])
+                            both_searches_count += 1
                             break
             
             # Then add remaining vector results (semantic matches without exact keyword)
+            vector_only_count = 0
             for vr in vector_results:
                 if vr.get('id') and vr['id'] not in seen_ids and len(combined_results) < match_count:
                     combined_results.append(vr)
                     seen_ids.add(vr['id'])
+                    vector_only_count += 1
             
             # Finally, add pure keyword matches if we still need more results
+            keyword_only_count = 0
             for kr in keyword_results:
                 if kr['id'] not in seen_ids and len(combined_results) < match_count:
                     # Convert keyword result to match vector result format
@@ -863,23 +952,50 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
                         'similarity': 0.5  # Default similarity for keyword-only matches
                     })
                     seen_ids.add(kr['id'])
+                    keyword_only_count += 1
+            
+            print(f"   📊 Hybrid search combination:")
+            print(f"      Both searches: {both_searches_count} results (boosted similarity)")
+            print(f"      Vector only: {vector_only_count} results")
+            print(f"      Keyword only: {keyword_only_count} results")
             
             # Use combined results
             results = combined_results[:match_count]
             
         else:
             # Standard vector search only
+            print(f"🎯 Using vector search only")
             results = search_documents(
                 client=supabase_client,
                 query=query,
                 match_count=match_count,
                 filter_metadata=filter_metadata
             )
+            print(f"   ✅ Vector search returned {len(results)} results")
+        
+        print(f"📈 Initial search completed: {len(results)} results before reranking")
         
         # Apply reranking if enabled
-        use_reranking = os.getenv("USE_RERANKING", "false") == "true"
-        if use_reranking and ctx.request_context.lifespan_context.reranking_model:
-            results = rerank_results(ctx.request_context.lifespan_context.reranking_model, query, results, content_key="content")
+        reranking_applied = False
+        if use_reranking and reranking_model:
+            print(f"🔄 Applying reranking with CrossEncoder model...")
+            original_results = len(results)
+            results = rerank_results(reranking_model, query, results, content_key="content")
+            reranking_applied = True
+            print(f"   ✅ Reranking completed: {original_results} results reordered")
+            
+            # Log top 3 rerank scores for debugging
+            if results:
+                print(f"   📊 Top rerank scores:")
+                for i, result in enumerate(results[:3]):
+                    rerank_score = result.get("rerank_score", "N/A")
+                    similarity = result.get("similarity", "N/A")
+                    print(f"      #{i+1}: rerank={rerank_score:.4f}, similarity={similarity:.4f}")
+        else:
+            if use_reranking and not reranking_model:
+                print(f"⚠️  Reranking enabled but model not loaded - skipping reranking")
+            else:
+                print(f"➡️  Reranking disabled - using original order")
         
         # Format the results
         formatted_results = []
@@ -895,12 +1011,17 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
                 formatted_result["rerank_score"] = result["rerank_score"]
             formatted_results.append(formatted_result)
         
+        print(f"✅ RAG Query completed:")
+        print(f"   Final results: {len(formatted_results)}")
+        print(f"   Search mode: {'Hybrid' if use_hybrid_search else 'Vector-only'}")
+        print(f"   Reranking applied: {'✅ Yes' if reranking_applied else '❌ No'}")
+        
         return json.dumps({
             "success": True,
             "query": query,
             "source_filter": source,
             "search_mode": "hybrid" if use_hybrid_search else "vector",
-            "reranking_applied": use_reranking and ctx.request_context.lifespan_context.reranking_model is not None,
+            "reranking_applied": reranking_applied,
             "results": formatted_results,
             "count": len(formatted_results)
         }, indent=2)

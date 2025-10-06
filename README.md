@@ -398,6 +398,64 @@ uv run src/crawl4ai_mcp.py
 
 The server will start and listen on the configured host and port.
 
+### ⏱️ **Important: Wait for Server Ready Message**
+
+**The MCP server takes time to initialize all components before it's ready to accept connections.** You **must** wait for the startup completion message before connecting your MCP client:
+
+```
+============================================================
+🚀 MCP Crawl4AI RAG Server Initialization Complete!
+============================================================
+
+📊 Embedding Provider: Qwen (Local)
+🔗 Embedding Model: Qwen/Qwen3-Embedding-0.6B
+💬 Chat Model Provider: GitHub Copilot
+🤖 Model Choice: gpt-4o-mini
+🔍 Reranking Model: Qwen/Qwen3-Reranker-0.6B
+🧠 Knowledge Graph: Enabled
+🗄️  Supabase: Connected
+
+✅ Server is ready to accept connections!
+💡 Connect your MCP client to start using RAG and web crawling tools.
+============================================================
+```
+
+#### Why Does Startup Take So Long?
+
+The initialization time depends on your configuration, but can take **30 seconds to 2+ minutes** due to:
+
+1. **🤖 Model Downloads**: First-time model downloads can be large:
+   - **Qwen3-Embedding-0.6B**: ~1.2GB download
+   - **Qwen3-Reranker-0.6B**: ~1.2GB download  
+   - **CrossEncoder reranker**: ~100MB download
+   - Models are cached after first download
+
+2. **🔧 Model Loading**: Loading models into memory:
+   - **Embedding models**: 10-30 seconds to load
+   - **Reranking models**: 5-15 seconds to load
+   - **CPU optimization**: Models are configured for CPU use
+
+3. **🗄️ Database Connections**: 
+   - **Supabase**: Connection verification and setup
+   - **Neo4j**: Knowledge graph initialization (if enabled)
+
+4. **🌐 External Service Verification**:
+   - **GitHub Copilot**: Token validation and rate limit setup
+   - **OpenAI**: API key verification
+
+#### Performance Tips
+
+- **Subsequent startups are faster** once models are cached locally
+- **Disable unused features** to reduce startup time:
+  ```bash
+  USE_RERANKING=false          # Skip reranker model loading
+  USE_KNOWLEDGE_GRAPH=false    # Skip Neo4j setup
+  USE_QWEN_EMBEDDINGS=false    # Use faster cloud embeddings
+  ```
+- **Use SSE transport** for better connection reliability during startup
+
+**⚠️ Do not connect your MCP client until you see the "Server is ready to accept connections!" message.**
+
 ## Integration with MCP Clients
 
 ### SSE Configuration
