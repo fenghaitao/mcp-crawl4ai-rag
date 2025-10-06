@@ -63,6 +63,65 @@ def run_copilot_tests():
         print(f"❌ Copilot tests failed: {e}")
         return False
 
+def run_qwen_tests():
+    """Run Qwen embedding integration tests."""
+    print("\n" + "=" * 60)
+    print("Running Qwen Embedding Integration Tests")
+    print("=" * 60)
+    
+    try:
+        import pytest
+        import sys
+        from pathlib import Path
+        
+        # Run pytest on the Qwen test files
+        test_files = [
+            "tests/test_qwen_embeddings.py",
+            "tests/test_qwen_integration.py"
+        ]
+        
+        # Check if sentence-transformers is available
+        try:
+            import sentence_transformers
+            print(f"✅ sentence-transformers version: {sentence_transformers.__version__}")
+        except ImportError:
+            print("⚠️  sentence-transformers not installed")
+            print("   Install with: pip install sentence-transformers")
+            print("   Skipping Qwen tests...")
+            return True  # Don't fail the whole suite
+        
+        # Run the tests
+        for test_file in test_files:
+            print(f"\nRunning {test_file}...")
+            result = pytest.main([test_file, "-v", "-x"])  # -x stops on first failure
+            if result != 0:
+                print(f"❌ {test_file} failed")
+                return False
+            else:
+                print(f"✅ {test_file} passed")
+        
+        print("✅ All Qwen tests passed!")
+        return True
+        
+    except ImportError:
+        print("⚠️  pytest not available, running basic Qwen test...")
+        try:
+            # Fallback to basic test
+            import os
+            os.environ["USE_QWEN_EMBEDDINGS"] = "true"
+            from utils import create_embedding
+            
+            embedding = create_embedding("Hello world")
+            if isinstance(embedding, list) and len(embedding) > 0:
+                print("✅ Basic Qwen embedding test passed")
+                return True
+            else:
+                print("❌ Basic Qwen embedding test failed")
+                return False
+        except Exception as e:
+            print(f"❌ Qwen tests failed: {e}")
+            return False
+
 def run_mcp_server_tests():
     """Run MCP server validation tests."""
     print("\n" + "=" * 60)
@@ -94,6 +153,7 @@ def check_environment():
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
         "USE_COPILOT_EMBEDDINGS": os.getenv("USE_COPILOT_EMBEDDINGS"),
         "USE_COPILOT_CHAT": os.getenv("USE_COPILOT_CHAT"),
+        "USE_QWEN_EMBEDDINGS": os.getenv("USE_QWEN_EMBEDDINGS"),
     }
     
     print("Environment Variables:")
@@ -141,6 +201,9 @@ def main():
     
     # Run Copilot tests
     results.append(("GitHub Copilot Integration", run_copilot_tests()))
+    
+    # Run Qwen embedding tests
+    results.append(("Qwen Embedding Integration", run_qwen_tests()))
     
     # Summary
     print("\n" + "=" * 60)
