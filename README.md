@@ -119,6 +119,8 @@ The server provides essential web crawling and search tools:
 4. Install dependencies:
    ```bash
    uv pip install -e .
+   # To avoid downloading large NVIDIA CUDA packages (4GB+), use:
+   # uv pip install --torch-backend cpu -e .
    crawl4ai-setup
    ```
 
