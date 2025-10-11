@@ -73,6 +73,7 @@ The server provides essential web crawling and search tools:
 
 - [Docker/Docker Desktop](https://www.docker.com/products/docker-desktop/) if running the MCP server as a container (recommended)
 - [Python 3.12+](https://www.python.org/downloads/) if running the MCP server directly through uv
+  - **Note**: For machines without sudo permissions, see the installation script option in the [Using uv directly](#using-uv-directly-no-docker) section
 - [Supabase](https://supabase.com/) (database for RAG)
 - **Embeddings** (choose one):
   - [OpenAI API key](https://platform.openai.com/api-keys) (for OpenAI text-embedding-3-small)
@@ -117,11 +118,30 @@ The server provides essential web crawling and search tools:
    ```
 
 4. Install dependencies:
+   
+   **Option A: With sudo permissions (recommended)**
    ```bash
    uv pip install -e .
    # To avoid downloading large NVIDIA CUDA packages (4GB+), use:
    # uv pip install --torch-backend cpu -e .
    crawl4ai-setup
+   ```
+   
+   **Option B: Without sudo permissions (for restricted environments)**
+   
+   If you're on a machine where you don't have sudo access (e.g., shared servers, HPC clusters), use the provided installation script:
+   ```bash
+   .venv/bin/python install_deps.py
+   ```
+   
+   This script will:
+   - Install all Python dependencies using `uv pip`
+   - Install Playwright browsers (Chromium, FFMPEG)
+   - Run the crawl4ai setup automatically
+   
+   ⚠️ **Note**: System-level dependencies for Playwright are not installed without sudo. If you encounter browser-related issues, you may need to request your system administrator to run:
+   ```bash
+   sudo .venv/bin/python -m playwright install-deps chromium
    ```
 
 5. Create a `.env` file based on the configuration section below
@@ -596,3 +616,46 @@ This implementation provides a foundation for building more complex MCP servers 
 2. Create your own lifespan function to add your own dependencies
 3. Modify the `utils.py` file for any helper functions you need
 4. Extend the crawling capabilities by adding more specialized crawlers
+
+## Troubleshooting
+
+### Installation Issues on Machines Without Sudo
+
+If you're working on a shared server, HPC cluster, or any environment where you don't have sudo/administrator permissions:
+
+1. **Use the provided installation script**:
+   ```bash
+   .venv/bin/python install_deps.py
+   ```
+   
+   This script handles:
+   - Installing all Python dependencies via `uv pip`
+   - Installing Playwright browsers (Chromium, FFMPEG, Headless Shell)
+   - Running the crawl4ai setup (creates `.crawl4ai` folder, initializes database)
+
+2. **If you encounter browser-related errors**:
+   
+   The script installs browsers but **skips system-level dependencies** that require sudo. If you see errors like:
+   ```
+   Error: libgobject-2.0.so.0: cannot open shared object file
+   ```
+   
+   You'll need to:
+   - Ask your system administrator to install Playwright dependencies:
+     ```bash
+     sudo .venv/bin/python -m playwright install-deps chromium
+     ```
+   - Or use Docker instead (recommended for restricted environments)
+
+3. **Alternative: Use Docker**:
+   
+   Docker containers have their own isolated environment and don't require sudo on the host machine (only to install Docker itself initially). This is the recommended approach for production deployments and restricted environments.
+
+### Common Issues
+
+- **Memory errors during crawling**: Reduce `max_concurrent` parameter in `smart_crawl_url` (try 5 instead of 10)
+- **Rate limiting errors**: Check your API rate limits and adjust `COPILOT_REQUESTS_PER_MINUTE` in `.env`
+- **Neo4j connection errors**: Ensure Neo4j is running and the connection details in `.env` are correct
+- **Supabase connection errors**: Verify your `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` are correct
+
+For more detailed parameter documentation, see `SMART_CRAWL_GUIDE.md`.
