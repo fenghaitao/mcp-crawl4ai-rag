@@ -47,8 +47,7 @@ def download_reranker_model():
                     repo_id=model_name,
                     filename=file_name,
                     cache_dir=local_dir,
-                    endpoint='https://hf-mirror.com',
-                    resume_download=True
+                    endpoint='https://hf-mirror.com'
                 )
                 print(f"Downloaded {file_name} to {downloaded_path}")
             except Exception as e:
