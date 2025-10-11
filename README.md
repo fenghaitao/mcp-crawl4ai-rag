@@ -55,7 +55,9 @@ The server provides essential web crawling and search tools:
 ### Core Tools (Always Available)
 
 1. **`crawl_single_page`**: Quickly crawl a single web page and store its content in the vector database
+   - **`disable_javascript`**: Optional parameter to disable JavaScript for static content only (prevents redirects)
 2. **`smart_crawl_url`**: Intelligently crawl a full website based on the type of URL provided (sitemap, llms-full.txt, or a regular webpage that needs to be crawled recursively)
+   - **`disable_javascript`**: Optional parameter (currently only shows warning; use `crawl_single_page` for static content)
 3. **`get_available_sources`**: Get a list of all available sources (domains) in the database
 4. **`perform_rag_query`**: Search for relevant content using semantic search with optional source filtering
 
@@ -477,6 +479,56 @@ The initialization time depends on your configuration, but can take **30 seconds
 - **Use SSE transport** for better connection reliability during startup
 
 **⚠️ Do not connect your MCP client until you see the "Server is ready to accept connections!" message.**
+
+### 🚫 **JavaScript Redirect Handling**
+
+Some websites use JavaScript redirects that can cause the crawler to extract much more content than expected. For example, a simple documentation page might redirect to load an entire reference manual.
+
+#### **Configuration Options**
+
+**1. Environment Variable (Global Setting):**
+```bash
+# In your .env file
+CRAWL_STATIC_CONTENT_ONLY=true   # All crawling uses static content only (recommended)
+CRAWL_STATIC_CONTENT_ONLY=false  # All crawling uses JavaScript for dynamic content
+```
+
+**2. Tool Parameter (Per-Request Override):**
+```python
+# Override environment setting for specific requests
+crawl_single_page(url="https://docs.example.com/page.html", disable_javascript=True)
+crawl_single_page(url="https://docs.example.com/page.html", disable_javascript=False)
+
+# Use environment setting (None = use DISABLE_JAVASCRIPT from .env)
+crawl_single_page(url="https://docs.example.com/page.html")
+```
+
+**3. Script Command Line (Override Environment):**
+```bash
+# Use environment variable setting
+python scripts/simple_crawl_json.py urls.json
+
+# Force static content only (overrides environment)
+python scripts/simple_crawl_json.py urls.json --static-only
+```
+
+#### **When to Use `disable_javascript=True`**
+
+Use JavaScript disabled when you want:
+- **Original page content only** (no JavaScript redirects)
+- **Static HTML content** without dynamic loading
+- **Faster crawling** of simple pages
+- **Predictable content size** for large documentation sites
+
+#### **Configuration Precedence**
+
+The system uses this priority order:
+1. **Tool parameter** (`disable_javascript=True/False`) - highest priority
+2. **Script CLI flag** (`--static-only`) - overrides environment
+**3. Environment variable** (`CRAWL_STATIC_CONTENT_ONLY=true`) - default setting
+4. **System default** (`false`) - if nothing else is set
+
+**💡 Tip: Try both modes to see which gives you the content you actually need for your RAG system.**
 
 ## Integration with MCP Clients
 

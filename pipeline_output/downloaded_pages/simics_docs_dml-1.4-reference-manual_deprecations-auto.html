@@ -1,0 +1,408 @@
+<!doctype html>
+<head>
+<meta charset="utf-8">
+<title>C Managing deprecated language features</title>
+<link rel="stylesheet" href="simics.css">
+<script>function postUrl() {
+    window.parent.postMessage({ content_url: window.location.href }, "*");
+}
+if (window.parent != null && window.parent != window) {
+    postUrl();
+    window.addEventListener("hashchange", function () {
+        postUrl();
+    });
+} else {
+    // Check if we are part of a Simics doc site and redirect if we are
+    fetch("../simics-doc-site-marker", { method: "HEAD" }).then(response => {
+        if (response.ok) {
+            window.location = "..#" + window.location.href;
+        } else {
+            console.info("Not part of a Simics documentation site");
+        }
+    }).catch(error => {
+        console.warn("Failed to check if this is a Simics documentation site:",
+            error);
+    });
+}</script>
+</head>
+<div class="chain">
+<a href="provisional-auto.html">B Provisional language features</a>
+<a href="changes.html">D Changes from DML 1.2 to DML 1.4</a>
+</div>
+<div class="path">
+<a href="index.html">Device Modeling Language 1.4 Reference Manual</a>
+&nbsp;/&nbsp;</div>
+<h1 id="managing-deprecated-language-features"><a href="#managing-deprecated-language-features">C Managing deprecated language features</a></h1>
+<p>As the DML language evolves, we sometimes need to change the language in
+incompatible ways, which requires DML users to migrate their code. This
+appendix describes the mechanisms we provide to make this migration process
+smooth for users with large DML code bases.</p>
+<p>In DML, deprecations can come in many forms. Deprecations in the form of
+removed or renamed symbols in libraries are rather easy to manage, since they
+give clear compile errors that often are straightforward to fix. A slightly
+harder type of deprecation is when some language construct or API function
+adjusts its semantics; this can make the model behave differently without
+signalling error messages. A third kind of deprecation is when DML changes how
+compiled models appear in Simics, typically to adjust changes in the Simics
+API. Such changes add another dimension because they typically affect the
+end-users of the DML models, rather than the authors of the models. Thus, as an
+author of a model you may need to synchronize your migration of such features
+with your end-users, to ease their transition to a new major version.</p>
+<h2 id="deprecation-mechanisms"><a href="#deprecation-mechanisms">C.1 Deprecation mechanisms</a></h2>
+<p>The simplest deprecation mechanism is Simics API versions: Each deprecated DML
+feature is associated with a Simics API version, and each Simics version
+supports a number of such API versions. Features reach end-of-life when moving
+to a new Simics major version, the features belonging to a previous Simics API
+version are dropped. Since Simics is currently the primary distribution channel
+for DML, this deprecation scheme is used for DML features as well.</p>
+<p>This scheme allows users with a large code base to smoothly migrate from one
+Simics major version, N, to the next, N+1:</p>
+<ul>
+<li>First, while still using version N, make sure all Simics modules are updated
+to use API version N. Modules can be migrated one by one.</li>
+<li>Second, update the Simics version to N+1. This should normally have no
+effect on DML, but may come with other challenges.</li>
+<li>Third, update modules to API N+1, one by one. Simics version N+1 will always
+offers full support for API N, so there is no rush to update, but changing
+the API version early makes sure deprecated features are not introduced in
+new code.</li>
+</ul>
+<p>In addition to the API version, DML offers some compiler flags for selectively
+disabling deprecated features that are normally part of the used API. This has
+some uses, in particular:</p>
+<ul>
+<li>During migration to a new API version, disabling one deprecated feature at a
+time can allow a smoother, more gradual, migration.</li>
+<li>If a legacy feature is still fully supported in the latest API version, then
+it cannot be disabled by selecting an API version, so selectively disabling
+it is the only way to turn it off. There are reasons to do this, e.g.:
+<ul>
+<li>Disabling a feature before it is deprecated guarantees that it is not
+relied upon in new code, which eases later migration.</li>
+<li>Avoiding a feature that has a newer replacement makes the code base
+cleaner and more consistent.</li>
+<li>Some legacy features can also bloat models, by exposing features in a
+redundant manner. This can also have a negative impact on performance.</li>
+</ul>
+</li>
+</ul>
+<h2 id="controlling-deprecation-on-the-dml-command-line"><a href="#controlling-deprecation-on-the-dml-command-line">C.2 Controlling deprecation on the DML command-line</a></h2>
+<p>DMLC provides a command-line flag <code>--api-version</code> to specify the API version to
+be used for a model. When building with the standard Simics build system, this
+is controlled by the <code>SIMICS_API_VERSION</code> variable in <code>make</code>, or the
+<code>SIMICS_API</code>/<code>MODULE_SIMICS_API</code> variable in <code>CMake</code>.</p>
+<p>DMLC also provides the <code>--no-compat=<em>tag</em></code> flag, which disables the
+feature represented by <em><code>tag</code></em>. The available tags are listed in the next
+section. The tag also controls the name of a global boolean parameter that the
+DML program may use to check whether the feature is available. The parameter's
+name is the tag name preceded by <code>_compat_</code>.</p>
+<h2 id="list-of-deprecated-features"><a href="#list-of-deprecated-features">C.3 List of deprecated features</a></h2>
+<h3 id="features-available-up-to-and-including-simics-api-6"><a href="#features-available-up-to-and-including-simics-api-6">C.3.1 Features available up to and including --simics-api=6</a></h3>
+<p>These features correspond to functionality removed when compiling using
+Simics API 7 or newer. With older Simics API versions, these
+features can be disabled individually by passing <tt>--no-compat=<em>TAG</em></tt>
+to the <code>dmlc</code> compiler.</p>
+<dl>
+  <dt id="dt:dml12_goto"><a href="#dt:dml12_goto">dml12_goto</a></dt>
+  <dd>
+<p>The <code>goto</code> statement is deprecated; this compatibility feature
+preserves it. Most <code>goto</code> based control structures can be reworked by
+changing the <code>goto</code> into a <code>throw</code>, and its label into a <code>catch</code>
+block; since this is sometimes nontrivial, it can be useful to disable
+the <code>goto</code> statement separately.</p>
+</dd>
+  <dt id="dt:dml12_inline"><a href="#dt:dml12_inline">dml12_inline</a></dt>
+  <dd>
+<p>When using <code>inline</code> to inline a method in a DML 1.2 device,
+constant arguments passed in typed parameters are inlined as
+constants when this feature is enabled. This can improve
+compilation time in some cases, but has some unintuitive semantic
+implications.</p>
+</dd>
+  <dt id="dt:dml12_int"><a href="#dt:dml12_int">dml12_int</a></dt>
+  <dd>
+<p>This compatibility feature affects many semantic details of
+integer arithmetic. When this feature is enabled, DMLC translates
+most integer operations directly into C, without compensating for
+DML-specifics, like the support for odd-sized
+<tt>uint<i>NN</i></tt> types; this can sometimes have unexpected
+consequences. The most immediate effect of disabling this feature
+is that DMLC will report errors on statements like <code>assert 0;</code> and
+<code>while (1) { ... }</code>, which need to change into <code>assert false;</code> and
+<code>while (true) { ... }</code>, respectively. Other effects include:</p>
+<ul>
+<li>
+<p>Integers of non-standard sizes are represented as a native C
+type, e.g. <code>uint5</code> is represented as <code>uint8</code>, allowing it to
+store numbers too large to fit in 5 bits. With modern DML
+semantics, arithmetic is done on 64-bit integers and bits are
+truncated if casting or storing in a smaller type.</p>
+<p>Old code sometimes relies on this feature by comparing variables
+of type <code>int1</code> to the value <code>1</code>. In DML 1.4, the only values of
+type <code>int1</code> are <code>0</code> and <code>-1</code>, so such code should be rewritten
+to use the <code>uint1</code> type. It can be a good idea to grep for
+<code>[^a-z_]int1[^0-9]</code> and review if <code>uint1</code> is a better choice.</p>
+</li>
+<li>
+<p>Some operations have undefined behaviour in C, which is
+inherited by traditional DML 1.2. In modern DML this is
+well-defined, e.g., an unconditional critical error on negative
+shift or division by zero, and truncation on too large shift
+operands or signed shift overflow.</p>
+</li>
+<li>
+<p>Comparison operators <code>&lt;</code>, <code>&lt;=</code>, <code>==</code>, <code>&gt;=</code>, <code>&gt;</code> inherit C
+semantics in traditional DML, whereas in modern DML they are
+compared as integers. This sometimes makes a difference when
+comparing signed and unsigned numbers; in particular, <code>-1 != 0xffffffffffffffff</code> consistently in modern DML, whereas with
+compatibility semantics, they are consiered different only if
+both are constant.</p>
+</li>
+</ul>
+<p>The <code>dml12_int</code> feature only applies to DML 1.2 files; if a DML
+1.4 file is imported from a DML 1.2 file, then modern DML
+semantics is still used for operations in that file.</p>
+</dd>
+  <dt id="dt:dml12_misc"><a href="#dt:dml12_misc">dml12_misc</a></dt>
+  <dd>
+<p>This compatibility feature preserves a number of minor language quirks
+that were originally in DML 1.2, but were cleaned up in
+DML 1.4. When this feature is enabled, DML 1.2 will permit the following:</p>
+<ul>
+<li>
+<p><code>sizeof(typename)</code> (see <code>WSIZEOFTYPE</code>)</p>
+</li>
+<li>
+<p>the <code>typeof</code> operator on an expression that isn't an lvalue</p>
+</li>
+<li>
+<p><code>select</code> statements over <code>vect</code> types</p>
+</li>
+<li>
+<p>Passing a string literal in a (non-<code>const</code>) <code>char *</code> method argument</p>
+</li>
+<li>
+<p>Using the character <code>-</code> in the <code>c_name</code> parameter of <code>interface</code> objects</p>
+</li>
+<li>
+<p>Using the <code>c_name</code> parameter to override interface type in
+<code>implement</code> objects</p>
+</li>
+<li>
+<p><code>loggroup</code> identifiers are accessible under the same name in
+generated C code</p>
+</li>
+<li>
+<p>Applying the <code>&amp;</code> operator on something that isn't an lvalue
+(typically gives broken C code)</p>
+</li>
+<li>
+<p><code>extern</code> statements that do not specify a type (<code>extern foo;</code>)</p>
+</li>
+<li>
+<p>Anonymous banks (<code>bank { ... }</code>)</p>
+</li>
+<li>
+<p>Unused templates may instantiate non-existing templates</p>
+</li>
+<li>
+<p>The same symbol may be used both for a top-level object (<code>$</code>
+scope) and a top-level symbol (non-<code>$</code> scope, e.g. <code>extern</code>,
+<code>constant</code> or <code>loggroup</code>)</p>
+</li>
+</ul>
+</dd>
+  <dt id="dt:io_memory"><a href="#dt:io_memory">io_memory</a></dt>
+  <dd>
+<p>The <code>transaction</code> interface was introduced in 6, and will
+eventually replace the <code>io_memory</code> interface. When this feature is
+enabled, the top-level parameter <code>use_io_memory</code> defaults to
+<code>true</code>, causing <code>bank</code> objects to implement <code>io_memory</code> instead of
+<code>transaction</code> by default.</p>
+</dd>
+  <dt id="dt:shared_logs_on_device"><a href="#dt:shared_logs_on_device">shared_logs_on_device</a></dt>
+  <dd>
+<p>This compatibility feature changes the semantics of log statements
+inside shared methods so that they always log on the device object, instead
+of the nearest enclosing configuration object like with non-shared methods.
+This behaviour was a bug present since the very introduction of shared
+methods, which has lead to plenty of script code having become reliant
+on it, especially in regards to how banks log. This feature preserves the
+bugged behaviour.</p>
+</dd>
+  <dt id="dt:suppress_wlogmixup"><a href="#dt:suppress_wlogmixup">suppress_WLOGMIXUP</a></dt>
+  <dd>
+<p>This compatibility feature makes it so the warning <code>WLOGMIXUP</code> is
+suppressed by default. <code>WLOGMIXUP</code> warns about usages of a common faulty
+pattern which results in broken log statements — for more
+information, see the documentation of <code>WLOGMIXUP</code> in the
+<a href="messages.html">Messages</a> section.</p>
+<p><code>WLOGMIXUP</code> is suppressed by default below Simics API version 7 in order
+to avoid overwhelming users with warnings, as the faulty pattern that
+<code>WLOGMIXUP</code> reports is very prevalent within existing code. Addressing
+applications of the faulty pattern should be done before or as part of
+migration to Simics API version 7.</p>
+<p>Passing <code>--no-compat=suppress_WLOGMIXUP</code> to DMLC has almost the same effect
+as passing <code>--warn=WLOGMIXUP</code>; either will cause DMLC to report the warning
+even when the Simics API version in use is below 7. The only difference
+between these two options is that if <code>--no-compat=suppress_WLOGMIXUP</code> is
+used (and <code>--warn=WLOGMIXUP</code> is not), then <code>WLOGMIXUP</code> may still be
+explicitly suppressed via <code>--no-warn=WLOGMIXUP</code>. In contrast,
+<code>--warn=WLOGMIXUP</code> doesn't allow for <code>WLOGMIXUP</code> to be suppressed at
+all.</p>
+</dd>
+</dl>
+<h3 id="features-available-up-to-and-including-simics-api-7"><a href="#features-available-up-to-and-including-simics-api-7">C.3.2 Features available up to and including --simics-api=7</a></h3>
+<p>These features correspond to functionality removed when compiling using
+Simics API 8 or newer. With older Simics API versions, these
+features can be disabled individually by passing <tt>--no-compat=<em>TAG</em></tt>
+to the <code>dmlc</code> compiler.</p>
+<dl>
+  <dt id="dt:broken_conditional_is"><a href="#dt:broken_conditional_is">broken_conditional_is</a></dt>
+  <dd>
+<p>This compatibility feature prevents DML from
+reporting errors when instantiating a template within an <code>#if</code> block:</p>
+<pre><code>#if (true) {
+    group g {
+        // should be an error, but silently ignored when this
+        // feature is enabled
+        is nonexisting_template;
+    }
+}
+</code></pre>
+<p>Up to Simics 7, a bug prevented DMLC from reporting an error; this
+feature exists to preserve that behaviour.</p>
+</dd>
+  <dt id="dt:broken_unused_types"><a href="#dt:broken_unused_types">broken_unused_types</a></dt>
+  <dd>
+<p>This compatibility feature prevents DML from
+reporting errors on unused <code>extern</code>-declared types:</p>
+<pre><code>extern typedef struct {
+    undefined_type_t member;
+} never_used_t;
+</code></pre>
+<p>Up to Simics 7, a bug prevented DMLC from reporting an error; this
+feature exists to preserve that behaviour.</p>
+</dd>
+  <dt id="dt:experimental_vect"><a href="#dt:experimental_vect">experimental_vect</a></dt>
+  <dd>
+<p><a id="experimental_vect"> This compat feature
+controls how DMLC reacts to uses of the <code>vect</code> syntax in files
+where the </a><a href="provisional-auto.html#simics_util_vect"><code>simics_util_vect</code> provisional feature</a>
+is not enabled.</p>
+<p>When the <code>experimental_vect</code> compatibility feature is
+enabled, such uses are permitted, and give a <code>WEXPERIMENTAL</code>
+warning in DML 1.4 (but no warning in DML 1.2). When
+<code>experimental_vect</code> is disabled, DMLC forbids the <code>vect</code>
+syntax.</p>
+</dd>
+  <dt id="dt:function_in_extern_struct"><a href="#dt:function_in_extern_struct">function_in_extern_struct</a></dt>
+  <dd>
+<p>This compatibility feature enables a traditionally allowed syntax for
+function pointer members of <code>extern typedef struct</code> declarations, where
+the <code>*</code> is omitted in the pointer type. When disabling this feature,
+any declarations on this form:</p>
+<pre><code>extern typedef struct {
+    void m(conf_object_t *);
+} my_interface_t;
+</code></pre>
+<p>need to be changed to the standard C form:</p>
+<pre><code>extern typedef struct {
+    void (*m)(conf_object_t *);
+} my_interface_t;
+</code></pre>
+</dd>
+  <dt id="dt:legacy_attributes"><a href="#dt:legacy_attributes">legacy_attributes</a></dt>
+  <dd>
+<p>This compatibility feature makes DMLC register all attributes using the
+legacy <code>SIM_register_typed_attribute</code> API function instead of the modern
+<code>SIM_register_attribute</code> family of API functions.</p>
+<p>Disabling this feature will make the dictionary attribute type ("D" in type
+strings) to become unsupported, and any usage of it rejected by Simics.
+Thus, when migrating away from this feature, any attribute of the model
+that leverages dictionary values should be changed to leverage a different
+representation. In general, any dictionary can instead be represented by a
+list of two-element lists, e.g. <code>[[<em>X</em>,<em>Y</em>]*]</code>,
+where <em>X</em> describes the type of keys, and <em>Y</em> describes the type of
+values.</p>
+</dd>
+  <dt id="dt:lenient_typechecking"><a href="#dt:lenient_typechecking">lenient_typechecking</a></dt>
+  <dd>
+<p>This compatibility feature makes DMLC's type checking very inexact and
+lenient in multiple respects when compared to GCC's type checking of the
+generated C.
+This discrepency mostly affects method overrides or uses of <code>extern</code>:d C
+macros, because in those scenarios DMLC can become wholly responsible for
+proper type checking.</p>
+<p>While migrating away from this feature, the most common type errors that
+its disablement introduces are due to discrepencies between pointer
+types. In particular, implicitly discarding <code>const</code>-qualification of a
+pointer's base type will never be tolerated, and <code>void</code> pointers are only
+considered equivalent with any other pointer type in the same contexts as
+C.</p>
+<p>Novel type errors from uses of <code>extern</code>:d macros can often be resolved by
+changing the signature of the <code>extern</code> declaration to more accurately
+reflect the macro's effective type.</p>
+</dd>
+  <dt id="dt:meaningless_log_levels"><a href="#dt:meaningless_log_levels">meaningless_log_levels</a></dt>
+  <dd>
+<p>The log level that may be specified for logs of kind "warning", "error"
+or "critical" typically must be 1, and any subsequent log level must
+typically be 5. This compatibility feature makes it so either log level may
+be any integer between 1 and 4 for these log kinds. The primary log level
+is always treated as 1, and any other value than 1 for the subsequent log
+level will be treated as 5 (that is, the log will only happen once)</p>
+</dd>
+  <dt id="dt:no_method_index_asserts"><a href="#dt:no_method_index_asserts">no_method_index_asserts</a></dt>
+  <dd>
+<p>This compatibility feature makes it so that methods defined under
+object arrays don't implicitly assert that the indices used to reference
+the object array when calling the method are in bounds.</p>
+<p>Migrating away from this compatibility feature should be a priority. If
+its disablement makes the simulation crash due to an assertion failing,
+then that <strong>definitely signifies a bug in your model; a bug that would
+very likely result in memory corruption if the assertion were not to
+be made.</strong></p>
+</dd>
+  <dt id="dt:optional_version_statement"><a href="#dt:optional_version_statement">optional_version_statement</a></dt>
+  <dd>
+<p>When this compatibility feature is enabled, the version
+specification statement (<code>dml 1.4;</code>) statement at the start of
+each file is optional (but the compiler warns if it is
+omitted). Also, <code>dml 1.3;</code> is permitted as a deprecated alias for
+<code>dml 1.4;</code>, with a warning.</p>
+</dd>
+  <dt id="dt:port_proxy_attrs"><a href="#dt:port_proxy_attrs">port_proxy_attrs</a></dt>
+  <dd>
+<p>In Simics 5, configuration attributes for <code>connect</code>,
+<code>attribute</code> and <code>register</code> objects inside banks and ports were
+registered on the device object, named like
+<code><em>bankname</em>_<em>attrname</em></code>. Such proxy
+attributes are only created When this feature is enabled.
+Proxy attributes are not created for all banks and ports, in the
+same manner as documented in the <code>port_proxy_ifaces</code> feature.</p>
+</dd>
+  <dt id="dt:port_proxy_ifaces"><a href="#dt:port_proxy_ifaces">port_proxy_ifaces</a></dt>
+  <dd>
+<p>Version 5 and earlier of Simics relied on interface ports (as
+registered by the <code>SIM_register_port_interface</code> API function) for
+exposing the interfaces of ports and banks. In newer versions of
+Simics, interfaces are instead exposed on separate configuration
+objects.  When this feature is enabled, old-style interface ports
+are created as proxies to the interfaces on the respective port
+objects. Such proxies are not created for all banks and ports;
+e.g., banks inside groups were not allowed in Simics 5, so such
+banks do not need proxies for backward compatibility.</p>
+</dd>
+  <dt id="dt:warning_statement"><a href="#dt:warning_statement">warning_statement</a></dt>
+  <dd>
+<p>This compatibility feature enables the <code>_warning</code> statement.
+This turned out to not be very useful, so in Simics API 8 and
+newer the feature is no longer allowed.</p>
+</dd>
+</dl>
+
+<div class="chain">
+<a href="provisional-auto.html">B Provisional language features</a>
+<a href="changes.html">D Changes from DML 1.2 to DML 1.4</a>
+</div>

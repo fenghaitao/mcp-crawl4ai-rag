@@ -98,8 +98,13 @@ async def crawl_single_url(crawler, supabase_client, url: str) -> bool:
     try:
         print(f"  Fetching content...")
         
-        # Configure the crawl
-        run_config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS, stream=False)
+        # Configure the crawl (JavaScript is disabled at browser level if needed)
+        run_config = CrawlerRunConfig(
+            cache_mode=CacheMode.BYPASS, 
+            stream=False,
+            wait_for="css:body",  # Wait for body tag to be loaded
+            delay_before_return_html=1.0  # Give page time to load
+        )
         
         # Crawl the page
         result = await crawler.arun(url=url, config=run_config)
@@ -156,17 +161,39 @@ async def crawl_single_url(crawler, supabase_client, url: str) -> bool:
         print(f"  Error: {e}")
         return False
 
-async def crawl_urls(json_file: str):
+async def crawl_urls(json_file: str, disable_javascript: bool = None):
     """Crawl all URLs from a JSON file."""
     try:
+        # Use environment variable if parameter not explicitly set
+        if disable_javascript is None:
+            disable_javascript = os.getenv("CRAWL_STATIC_CONTENT_ONLY", "false").lower() == "true"
+        
         print(f"Loading URLs from: {json_file}")
         urls = load_urls_from_json(json_file)
         
         print(f"Found {len(urls)} URLs to crawl")
+        if disable_javascript:
+            print("🚫 JavaScript disabled - crawling static content only")
+        else:
+            print("📱 JavaScript enabled - following redirects and dynamic content")
         print()
         
         # Initialize crawler and Supabase
-        browser_config = BrowserConfig(headless=True, verbose=False)
+        if disable_javascript:
+            extra_args = [
+                "--disable-javascript",
+                "--disable-web-security",
+                "--disable-features=VizDisplayCompositor",
+                "--no-sandbox"
+            ]
+        else:
+            extra_args = []
+            
+        browser_config = BrowserConfig(
+            headless=True, 
+            verbose=False,
+            extra_args=extra_args
+        )
         crawler = AsyncWebCrawler(config=browser_config)
         await crawler.__aenter__()
         
@@ -225,6 +252,8 @@ def main():
     parser = argparse.ArgumentParser(description='Crawl URLs from a JSON file')
     parser.add_argument('json_file', nargs='?', help='JSON file containing URLs')
     parser.add_argument('--create-example', action='store_true', help='Create example JSON file')
+    parser.add_argument('--static-only', action='store_true', 
+                       help='Disable JavaScript to get only static content (no redirects)')
     
     args = parser.parse_args()
     
@@ -235,10 +264,13 @@ def main():
     if not args.json_file:
         print("Error: Please provide a JSON file or use --create-example")
         print("Usage: python scripts/simple_crawl_json.py urls.json")
+        print("       python scripts/simple_crawl_json.py urls.json --static-only")
         print("       python scripts/simple_crawl_json.py --create-example")
         return
     
-    asyncio.run(crawl_urls(args.json_file))
+    # Determine disable_javascript setting: CLI arg takes precedence, then env var
+    disable_js = args.static_only if args.static_only else None
+    asyncio.run(crawl_urls(args.json_file, disable_javascript=disable_js))
 
 if __name__ == "__main__":
     # Load environment variables

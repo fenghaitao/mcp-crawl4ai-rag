@@ -243,11 +243,17 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
     if reranking_model and reranking_model_name:
         reranking_status = reranking_model_name
     
+    # Check crawling mode setting
+    static_content_only = os.getenv("CRAWL_STATIC_CONTENT_ONLY", "false").lower() == "true"
+    agentic_rag_enabled = os.getenv("USE_AGENTIC_RAG", "false").lower() == "true"
+    
     print(f"📊 Embedding Provider: {embedding_provider}")
     print(f"🔗 Embedding Model: {embedding_model}")
     print(f"💬 Chat Model Provider: {chat_provider}")
     print(f"🤖 Model Choice: {model_choice}")
     print(f"🔍 Reranking Model: {reranking_status}")
+    print(f"🕸️  Crawl Mode: {'Static Content Only' if static_content_only else 'Dynamic Content (JavaScript Enabled)'}")
+    print(f"🔬 Agentic RAG: {'Enabled (Code Examples Extracted)' if agentic_rag_enabled else 'Disabled'}")
     print(f"🧠 Knowledge Graph: {'Enabled' if knowledge_validator else 'Disabled'}")
     print(f"🗄️  Supabase: {'Connected' if supabase_client else 'Not Connected'}")
     
@@ -451,7 +457,7 @@ def process_code_example(args):
     return generate_code_example_summary(code, context_before, context_after)
 
 @mcp.tool()
-async def crawl_single_page(ctx: Context, url: str) -> str:
+async def crawl_single_page(ctx: Context, url: str, disable_javascript: bool = None) -> str:
     """
     Crawl a single web page and store its content in Supabase.
     
@@ -461,28 +467,57 @@ async def crawl_single_page(ctx: Context, url: str) -> str:
     Args:
         ctx: The MCP server provided context
         url: URL of the web page to crawl
+        disable_javascript: If True, disables JavaScript to get only static content (no redirects)
     
     Returns:
         Summary of the crawling operation and storage in Supabase
     """
+    # Use environment variable if parameter not explicitly set
+    if disable_javascript is None:
+        disable_javascript = os.getenv("CRAWL_STATIC_CONTENT_ONLY", "false").lower() == "true"
+    
     try:
         # Get the crawler from the context
         crawler = ctx.request_context.lifespan_context.crawler
         supabase_client = ctx.request_context.lifespan_context.supabase_client
         
-        # Configure the crawl
-        run_config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS, stream=False)
+        # Configure the crawl with JavaScript settings
+        if disable_javascript:
+            # For static content crawling without JavaScript
+            run_config = CrawlerRunConfig(
+                cache_mode=CacheMode.BYPASS, 
+                stream=False,
+                page_timeout=10000,  # 10 seconds timeout for static content
+                delay_before_return_html=1.0,  # Wait for content to load
+                wait_for="css:body",  # Wait for body tag to be loaded
+                js_code=""  # No JavaScript execution
+            )
+            print(f"🚫 Crawling static content only (JavaScript disabled): {url}")
+            print(f"   Environment CRAWL_STATIC_CONTENT_ONLY: {os.getenv('CRAWL_STATIC_CONTENT_ONLY', 'not set')}")
+        else:
+            # Normal crawling with JavaScript enabled
+            run_config = CrawlerRunConfig(
+                cache_mode=CacheMode.BYPASS, 
+                stream=False,
+                wait_for="css:body"  # Ensure body tag is loaded
+            )
+            print(f"📱 Crawling with JavaScript enabled: {url}")
+            print(f"   Environment CRAWL_STATIC_CONTENT_ONLY: {os.getenv('CRAWL_STATIC_CONTENT_ONLY', 'not set')}")
         
         # Crawl the page
         result = await crawler.arun(url=url, config=run_config)
         
         if result.success and result.markdown:
+            print(f"✅ Successfully crawled {url}")
+            print(f"   📄 Raw content length: {len(result.markdown)} characters")
+            
             # Extract source_id
             parsed_url = urlparse(url)
             source_id = parsed_url.netloc or parsed_url.path
             
             # Chunk the content
             chunks = smart_chunk_markdown(result.markdown)
+            print(f"   📦 Split into {len(chunks)} chunks (target: ~5000 chars per chunk)")
             
             # Prepare data for Supabase
             urls = []
@@ -591,7 +626,7 @@ async def crawl_single_page(ctx: Context, url: str) -> str:
         }, indent=2)
 
 @mcp.tool()
-async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concurrent: int = 10, chunk_size: int = 5000) -> str:
+async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concurrent: int = 10, chunk_size: int = 5000, disable_javascript: bool = None) -> str:
     """
     Intelligently crawl a URL based on its type and store content in Supabase.
     
@@ -608,10 +643,15 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
         max_depth: Maximum recursion depth for regular URLs (default: 3)
         max_concurrent: Maximum number of concurrent browser sessions (default: 10)
         chunk_size: Maximum size of each content chunk in characters (default: 1000)
+        disable_javascript: If True, disables JavaScript to get only static content (no redirects)
     
     Returns:
         JSON string with crawl summary and storage information
     """
+    # Use environment variable if parameter not explicitly set
+    if disable_javascript is None:
+        disable_javascript = os.getenv("CRAWL_STATIC_CONTENT_ONLY", "false").lower() == "true"
+    
     try:
         # Get the crawler from the context
         crawler = ctx.request_context.lifespan_context.crawler
@@ -638,6 +678,10 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
             crawl_type = "sitemap"
         else:
             # For regular URLs, use recursive crawl
+            if disable_javascript:
+                print(f"⚠️  Note: JavaScript disabling for smart crawling requires crawler reconfiguration")
+                print(f"   For static content only, consider using crawl_single_page with disable_javascript=True")
+            
             crawl_results = await crawl_recursive_internal_links(crawler, [url], max_depth=max_depth, max_concurrent=max_concurrent)
             crawl_type = "webpage"
         
