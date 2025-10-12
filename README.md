@@ -711,3 +711,62 @@ If you're working on a shared server, HPC cluster, or any environment where you 
 - **Supabase connection errors**: Verify your `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` are correct
 
 For more detailed parameter documentation, see `SMART_CRAWL_GUIDE.md`.
+
+## Testing Your RAG System
+
+After crawling content into your database, you can test and verify your RAG system using the included query script.
+
+### Quick RAG Testing with `scripts/query_rag.py`
+
+The `query_rag.py` script provides a command-line interface to test your RAG database and ensure everything is working correctly:
+
+```bash
+# Basic search to test your setup
+python scripts/query_rag.py "your search query here"
+
+# List all available sources in your database
+python scripts/query_rag.py --list-sources
+
+# Search with specific filtering
+python scripts/query_rag.py "device implementation" --source-type python --count 5 --verbose
+```
+
+**Key Testing Scenarios:**
+
+1. **Test Web Documentation**: Search crawled web docs
+   ```bash
+   python scripts/query_rag.py "API reference" --source-type docs
+   ```
+
+2. **Test Source Code**: Search crawled source files (if using Simics crawling script)
+   ```bash
+   python scripts/query_rag.py "DML device registers" --source-type dml
+   python scripts/query_rag.py "Python device class" --source-type python
+   ```
+
+3. **Test Code Examples** (requires `USE_AGENTIC_RAG=true`):
+   ```bash
+   python scripts/query_rag.py "implementation example" --type both
+   ```
+
+4. **Test Advanced Features**:
+   ```bash
+   # Test hybrid search (vector + keyword)
+   python scripts/query_rag.py "specific function name" --hybrid
+   
+   # Test reranking quality
+   python scripts/query_rag.py "complex query" --count 10 --verbose
+   ```
+
+**Expected Results:**
+- ✅ **Similarity scores** between 0.3-0.8+ (higher = better match)
+- ✅ **Rich metadata** showing file paths, methods, classes
+- ✅ **Relevant content** matching your search terms
+- ✅ **Multiple sources** if you've crawled different sites/codebases
+
+**Troubleshooting:**
+- 📭 **No results found**: Check if you've crawled content and your database is populated
+- 🔧 **Poor relevance**: Try enabling `USE_RERANKING=true` in your `.env` for better result ordering
+- 🐛 **Connection errors**: Verify your Supabase credentials and database setup
+
+See `scripts/README.md` for complete parameter documentation and advanced usage examples.
