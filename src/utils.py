@@ -509,8 +509,9 @@ def add_documents_to_supabase(
                     # Normal insert (we already deleted existing records)
                     client.table("crawled_pages").insert(batch_data).execute()
                 else:
-                    # Upsert - insert or update on conflict
-                    client.table("crawled_pages").upsert(batch_data).execute()
+                    # Upsert - insert or update on conflict using unique constraint
+                    # Use on_conflict parameter to specify which columns to use for conflict resolution
+                    client.table("crawled_pages").upsert(batch_data, on_conflict="url,chunk_number").execute()
                 # Success - break out of retry loop
                 break
             except Exception as e:
@@ -527,7 +528,10 @@ def add_documents_to_supabase(
                     successful_inserts = 0
                     for record in batch_data:
                         try:
-                            client.table("crawled_pages").insert(record).execute()
+                            if delete_existing:
+                                client.table("crawled_pages").insert(record).execute()
+                            else:
+                                client.table("crawled_pages").upsert(record, on_conflict="url,chunk_number").execute()
                             successful_inserts += 1
                         except Exception as individual_error:
                             print(f"Failed to insert individual record for URL {record['url']}: {individual_error}")
@@ -794,7 +798,12 @@ def add_code_examples_to_supabase(
         
         for retry in range(max_retries):
             try:
-                client.table('code_examples').insert(batch_data).execute()
+                if delete_existing:
+                    # Normal insert (we already deleted existing records)
+                    client.table('code_examples').insert(batch_data).execute()
+                else:
+                    # Upsert - insert or update on conflict using unique constraint
+                    client.table('code_examples').upsert(batch_data, on_conflict="url,chunk_number").execute()
                 # Success - break out of retry loop
                 break
             except Exception as e:
@@ -811,7 +820,10 @@ def add_code_examples_to_supabase(
                     successful_inserts = 0
                     for record in batch_data:
                         try:
-                            client.table('code_examples').insert(record).execute()
+                            if delete_existing:
+                                client.table('code_examples').insert(record).execute()
+                            else:
+                                client.table('code_examples').upsert(record, on_conflict="url,chunk_number").execute()
                             successful_inserts += 1
                         except Exception as individual_error:
                             print(f"Failed to insert individual record for URL {record['url']}: {individual_error}")

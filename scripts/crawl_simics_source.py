@@ -230,7 +230,7 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], de
                     chunk_metadata.update({
                         "chunk_index": i,
                         "url": file_url,
-                        "source": source_id,
+                        "source_id": source_id,
                         "crawl_time": "simics_source_crawl"
                     })
                     metadatas.append(chunk_metadata)
@@ -270,7 +270,7 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], de
                                 code_meta.update({
                                     "chunk_index": i,
                                     "url": file_url,
-                                    "source": source_id,
+                                    "source_id": source_id,
                                     "code_length": len(block['code']),
                                     "block_type": block.get('type', 'unknown')
                                 })
