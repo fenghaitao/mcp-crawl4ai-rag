@@ -458,7 +458,7 @@ def process_code_example(args):
     code, context_before, context_after = args
     return generate_code_example_summary(code, context_before, context_after)
 
-@mcp.tool()
+# @mcp.tool()  # Disabled - use offline crawling scripts instead
 async def crawl_single_page(ctx: Context, url: str, disable_javascript: bool = None, chunk_size: int = 5000) -> str:
     """
     Crawl a single web page and store its content in Supabase.
@@ -629,7 +629,7 @@ async def crawl_single_page(ctx: Context, url: str, disable_javascript: bool = N
             "error": str(e)
         }, indent=2)
 
-@mcp.tool()
+# @mcp.tool()  # Disabled - use offline crawling scripts instead
 async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concurrent: int = 10, chunk_size: int = 5000, disable_javascript: bool = None) -> str:
     """
     Intelligently crawl a URL based on its type and store content in Supabase.
