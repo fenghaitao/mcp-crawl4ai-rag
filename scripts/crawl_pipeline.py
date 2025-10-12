@@ -166,6 +166,24 @@ def main():
         str(downloaded_pages_dir)  # Pass the directory, not the JSON file
     ], "Local File Crawling")
     
+    if not crawl_success:
+        print("❌ Local file crawling failed. Cannot continue.")
+        return
+    
+    # Step 5: Crawl Simics source code (if enabled)
+    simics_enabled = os.getenv("CRAWL_SIMICS_SOURCE", "false").lower() == "true"
+    if simics_enabled:
+        simics_success = run_command([
+            python_exe, "scripts/crawl_simics_source.py",
+            "--output-dir", str(output_dir)
+        ], "Simics Source Code Crawling")
+        
+        if not simics_success:
+            print("⚠️  Simics source crawling failed, but continuing...")
+    else:
+        print("\n🔄 Skipping Simics source crawling (CRAWL_SIMICS_SOURCE=false)")
+        simics_success = True  # Don't fail the pipeline if it's disabled
+    
     # Final summary
     print(f"\n{'='*60}")
     print("🎉 PIPELINE COMPLETE")

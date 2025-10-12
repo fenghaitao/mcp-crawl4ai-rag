@@ -380,6 +380,7 @@ def add_documents_to_supabase(
     contents: List[str], 
     metadatas: List[Dict[str, Any]],
     url_to_full_document: Dict[str, str],
+    delete_existing: bool = True,
     batch_size: int = 20
 ) -> None:
     """
@@ -395,23 +396,27 @@ def add_documents_to_supabase(
         url_to_full_document: Dictionary mapping URLs to their full document content
         batch_size: Size of each batch for insertion
     """
-    # Get unique URLs to delete existing records
-    unique_urls = list(set(urls))
-    
-    # Delete existing records for these URLs in a single operation
-    try:
-        if unique_urls:
-            # Use the .in_() filter to delete all records with matching URLs
-            client.table("crawled_pages").delete().in_("url", unique_urls).execute()
-    except Exception as e:
-        print(f"Batch delete failed: {e}. Trying one-by-one deletion as fallback.")
-        # Fallback: delete records one by one
-        for url in unique_urls:
-            try:
-                client.table("crawled_pages").delete().eq("url", url).execute()
-            except Exception as inner_e:
-                print(f"Error deleting record for URL {url}: {inner_e}")
-                # Continue with the next URL even if one fails
+    # Delete existing records only if delete_existing is True
+    if delete_existing:
+        # Get unique URLs to delete existing records
+        unique_urls = list(set(urls))
+        
+        # Delete existing records for these URLs in a single operation
+        try:
+            if unique_urls:
+                # Use the .in_() filter to delete all records with matching URLs
+                client.table("crawled_pages").delete().in_("url", unique_urls).execute()
+        except Exception as e:
+            print(f"Batch delete failed: {e}. Trying one-by-one deletion as fallback.")
+            # Fallback: delete records one by one
+            for url in unique_urls:
+                try:
+                    client.table("crawled_pages").delete().eq("url", url).execute()
+                except Exception as inner_e:
+                    print(f"Error deleting record for URL {url}: {inner_e}")
+                    # Continue with the next URL even if one fails
+    else:
+        print("Skipping deletion of existing records (--skip-delete enabled)")
     
     # Check if MODEL_CHOICE is set for contextual embeddings
     use_contextual_embeddings = os.getenv("USE_CONTEXTUAL_EMBEDDINGS", "false") == "true"
@@ -473,9 +478,11 @@ def add_documents_to_supabase(
             # Extract metadata fields
             chunk_size = len(contextual_contents[j])
             
-            # Extract source_id from URL
-            parsed_url = urlparse(batch_urls[j])
-            source_id = parsed_url.netloc or parsed_url.path
+            # Use source_id from metadata if available, otherwise extract from URL
+            source_id = batch_metadatas[j].get("source_id")
+            if not source_id:
+                parsed_url = urlparse(batch_urls[j])
+                source_id = parsed_url.netloc or parsed_url.path
             
             # Prepare data for insertion
             data = {
@@ -498,7 +505,12 @@ def add_documents_to_supabase(
         
         for retry in range(max_retries):
             try:
-                client.table("crawled_pages").insert(batch_data).execute()
+                if delete_existing:
+                    # Normal insert (we already deleted existing records)
+                    client.table("crawled_pages").insert(batch_data).execute()
+                else:
+                    # Upsert - insert or update on conflict
+                    client.table("crawled_pages").upsert(batch_data).execute()
                 # Success - break out of retry loop
                 break
             except Exception as e:
@@ -701,6 +713,7 @@ def add_code_examples_to_supabase(
     code_examples: List[str],
     summaries: List[str],
     metadatas: List[Dict[str, Any]],
+    delete_existing: bool = True,
     batch_size: int = 20
 ):
     """
@@ -718,13 +731,16 @@ def add_code_examples_to_supabase(
     if not urls:
         return
         
-    # Delete existing records for these URLs
-    unique_urls = list(set(urls))
-    for url in unique_urls:
-        try:
-            client.table('code_examples').delete().eq('url', url).execute()
-        except Exception as e:
-            print(f"Error deleting existing code examples for {url}: {e}")
+    # Delete existing records for these URLs only if delete_existing is True
+    if delete_existing:
+        unique_urls = list(set(urls))
+        for url in unique_urls:
+            try:
+                client.table('code_examples').delete().eq('url', url).execute()
+            except Exception as e:
+                print(f"Error deleting existing code examples for {url}: {e}")
+    else:
+        print("Skipping deletion of existing code examples (--skip-delete enabled)")
     
     # Process in batches
     total_items = len(urls)
@@ -756,9 +772,11 @@ def add_code_examples_to_supabase(
         for j, embedding in enumerate(valid_embeddings):
             idx = i + j
             
-            # Extract source_id from URL
-            parsed_url = urlparse(urls[idx])
-            source_id = parsed_url.netloc or parsed_url.path
+            # Use source_id from metadata if available, otherwise extract from URL
+            source_id = metadatas[idx].get("source_id")
+            if not source_id:
+                parsed_url = urlparse(urls[idx])
+                source_id = parsed_url.netloc or parsed_url.path
             
             batch_data.append({
                 'url': urls[idx],

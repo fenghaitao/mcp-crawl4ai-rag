@@ -12,13 +12,14 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-def query_documents(query: str, source_filter: str = None, match_count: int = 5, use_hybrid: bool = False):
+def query_documents(query: str, source_filter: str = None, source_type: str = 'all', match_count: int = 5, use_hybrid: bool = False):
     """
     Query the document database.
     
     Args:
         query: Search query
-        source_filter: Optional source domain filter
+        source_filter: Optional source domain filter (legacy)
+        source_type: Source type filter ('docs', 'dml', 'python', 'source', 'all')
         match_count: Number of results to return
         use_hybrid: Whether to use hybrid search
         
@@ -30,12 +31,24 @@ def query_documents(query: str, source_filter: str = None, match_count: int = 5,
         
         client = get_supabase_client()
         
-        # Prepare filter metadata
-        filter_metadata = {"source": source_filter} if source_filter else None
+        # Determine filter based on source_type
+        filter_metadata = None
+        if source_type == 'docs':
+            filter_metadata = {"source": "intel.github.io"}
+        elif source_type == 'dml':
+            filter_metadata = {"source": "simics-dml"}
+        elif source_type == 'python':
+            filter_metadata = {"source": "simics-python"}
+        elif source_type == 'source':
+            # Need to search multiple sources - we'll handle this differently
+            filter_metadata = None  # Will filter after query
+        elif source_filter:
+            # Legacy source_filter parameter
+            filter_metadata = {"source": source_filter}
         
         print(f"🔍 Searching documents...")
         print(f"   Query: '{query}'")
-        print(f"   Source filter: {source_filter or 'None'}")
+        print(f"   Source type: {source_type}")
         print(f"   Match count: {match_count}")
         print(f"   Hybrid search: {'Yes' if use_hybrid else 'No'}")
         print()
@@ -51,6 +64,10 @@ def query_documents(query: str, source_filter: str = None, match_count: int = 5,
             filter_metadata=filter_metadata
         )
         
+        # Post-filter for 'source' type (both DML and Python)
+        if source_type == 'source':
+            results = [r for r in results if r.get('metadata', {}).get('source') in ['simics-dml', 'simics-python']]
+        
         return results
         
     except Exception as e:
@@ -59,13 +76,14 @@ def query_documents(query: str, source_filter: str = None, match_count: int = 5,
         traceback.print_exc()
         return []
 
-def query_code_examples(query: str, source_filter: str = None, match_count: int = 5):
+def query_code_examples(query: str, source_filter: str = None, source_type: str = 'all', match_count: int = 5):
     """
     Query the code examples database.
     
     Args:
         query: Search query for code
-        source_filter: Optional source domain filter
+        source_filter: Optional source domain filter (legacy)
+        source_type: Source type filter ('docs', 'dml', 'python', 'source', 'all')
         match_count: Number of results to return
         
     Returns:
@@ -76,12 +94,24 @@ def query_code_examples(query: str, source_filter: str = None, match_count: int 
         
         client = get_supabase_client()
         
-        # Prepare filter metadata
-        filter_metadata = {"source": source_filter} if source_filter else None
+        # Determine filter based on source_type
+        filter_metadata = None
+        if source_type == 'docs':
+            filter_metadata = {"source": "intel.github.io"}
+        elif source_type == 'dml':
+            filter_metadata = {"source": "simics-dml"}
+        elif source_type == 'python':
+            filter_metadata = {"source": "simics-python"}
+        elif source_type == 'source':
+            # Need to search multiple sources - we'll handle this differently
+            filter_metadata = None  # Will filter after query
+        elif source_filter:
+            # Legacy source_filter parameter
+            filter_metadata = {"source": source_filter}
         
         print(f"🔍 Searching code examples...")
         print(f"   Query: '{query}'")
-        print(f"   Source filter: {source_filter or 'None'}")
+        print(f"   Source type: {source_type}")
         print(f"   Match count: {match_count}")
         print()
         
@@ -91,6 +121,10 @@ def query_code_examples(query: str, source_filter: str = None, match_count: int 
             match_count=match_count,
             filter_metadata=filter_metadata
         )
+        
+        # Post-filter for 'source' type (both DML and Python)
+        if source_type == 'source':
+            results = [r for r in results if r.get('metadata', {}).get('source') in ['simics-dml', 'simics-python']]
         
         return results
         
@@ -207,11 +241,13 @@ def get_available_sources():
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(description='Query the RAG database')
-    parser.add_argument('query', help='Search query')
+    parser.add_argument('query', nargs='?', help='Search query (required unless --list-sources)')
     parser.add_argument('--source', '-s', help='Filter by source domain (e.g., intel.github.io)')
     parser.add_argument('--count', '-c', type=int, default=5, help='Number of results (default: 5)')
     parser.add_argument('--type', '-t', choices=['docs', 'code', 'both'], default='docs',
                        help='Search type: docs, code, or both (default: docs)')
+    parser.add_argument('--source-type', choices=['docs', 'dml', 'python', 'source', 'all'], default='all',
+                       help='Filter by source: docs, dml, python, source (dml+python), or all (default: all)')
     parser.add_argument('--hybrid', action='store_true', help='Use hybrid search for documents')
     parser.add_argument('--list-sources', action='store_true', help='List available sources and exit')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
@@ -233,6 +269,11 @@ def main():
             print("   No sources found")
         return
     
+    if not args.query:
+        print("❌ Error: Query is required unless using --list-sources")
+        parser.print_help()
+        return
+    
     # Show configuration if verbose
     if args.verbose:
         print("⚙️  Configuration:")
@@ -248,6 +289,7 @@ def main():
         doc_results = query_documents(
             query=args.query,
             source_filter=args.source,
+            source_type=args.source_type,
             match_count=args.count,
             use_hybrid=args.hybrid
         )
@@ -262,6 +304,7 @@ def main():
         code_results = query_code_examples(
             query=args.query,
             source_filter=args.source,
+            source_type=args.source_type,
             match_count=args.count
         )
         display_code_results(code_results)

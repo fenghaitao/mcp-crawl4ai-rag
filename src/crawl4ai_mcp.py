@@ -246,6 +246,7 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
     # Check crawling mode setting
     static_content_only = os.getenv("CRAWL_STATIC_CONTENT_ONLY", "false").lower() == "true"
     agentic_rag_enabled = os.getenv("USE_AGENTIC_RAG", "false").lower() == "true"
+    simics_source_enabled = os.getenv("CRAWL_SIMICS_SOURCE", "false").lower() == "true"
     
     print(f"📊 Embedding Provider: {embedding_provider}")
     print(f"🔗 Embedding Model: {embedding_model}")
@@ -254,6 +255,7 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
     print(f"🔍 Reranking Model: {reranking_status}")
     print(f"🕸️  Crawl Mode: {'Static Content Only' if static_content_only else 'Dynamic Content (JavaScript Enabled)'}")
     print(f"🔬 Agentic RAG: {'Enabled (Code Examples Extracted)' if agentic_rag_enabled else 'Disabled'}")
+    print(f"📁 Simics Source: {'Enabled (DML + Python)' if simics_source_enabled else 'Disabled'}")
     print(f"🧠 Knowledge Graph: {'Enabled' if knowledge_validator else 'Disabled'}")
     print(f"🗄️  Supabase: {'Connected' if supabase_client else 'Not Connected'}")
     
