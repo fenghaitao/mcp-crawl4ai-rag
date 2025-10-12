@@ -34,17 +34,17 @@ def query_documents(query: str, source_filter: str = None, source_type: str = 'a
         # Determine filter based on source_type
         filter_metadata = None
         if source_type == 'docs':
-            filter_metadata = {"source": "intel.github.io"}
+            filter_metadata = {"source_id": "intel.github.io"}
         elif source_type == 'dml':
-            filter_metadata = {"source": "simics-dml"}
+            filter_metadata = {"source_id": "simics-dml"}
         elif source_type == 'python':
-            filter_metadata = {"source": "simics-python"}
+            filter_metadata = {"source_id": "simics-python"}
         elif source_type == 'source':
             # Need to search multiple sources - we'll handle this differently
             filter_metadata = None  # Will filter after query
         elif source_filter:
             # Legacy source_filter parameter
-            filter_metadata = {"source": source_filter}
+            filter_metadata = {"source_id": source_filter}
         
         print(f"🔍 Searching documents...")
         print(f"   Query: '{query}'")
@@ -66,7 +66,7 @@ def query_documents(query: str, source_filter: str = None, source_type: str = 'a
         
         # Post-filter for 'source' type (both DML and Python)
         if source_type == 'source':
-            results = [r for r in results if r.get('metadata', {}).get('source') in ['simics-dml', 'simics-python']]
+            results = [r for r in results if r.get('metadata', {}).get('source_id') in ['simics-dml', 'simics-python']]
         
         return results
         
@@ -97,17 +97,17 @@ def query_code_examples(query: str, source_filter: str = None, source_type: str 
         # Determine filter based on source_type
         filter_metadata = None
         if source_type == 'docs':
-            filter_metadata = {"source": "intel.github.io"}
+            filter_metadata = {"source_id": "intel.github.io"}
         elif source_type == 'dml':
-            filter_metadata = {"source": "simics-dml"}
+            filter_metadata = {"source_id": "simics-dml"}
         elif source_type == 'python':
-            filter_metadata = {"source": "simics-python"}
+            filter_metadata = {"source_id": "simics-python"}
         elif source_type == 'source':
             # Need to search multiple sources - we'll handle this differently
             filter_metadata = None  # Will filter after query
         elif source_filter:
             # Legacy source_filter parameter
-            filter_metadata = {"source": source_filter}
+            filter_metadata = {"source_id": source_filter}
         
         print(f"🔍 Searching code examples...")
         print(f"   Query: '{query}'")
@@ -124,7 +124,7 @@ def query_code_examples(query: str, source_filter: str = None, source_type: str 
         
         # Post-filter for 'source' type (both DML and Python)
         if source_type == 'source':
-            results = [r for r in results if r.get('metadata', {}).get('source') in ['simics-dml', 'simics-python']]
+            results = [r for r in results if r.get('metadata', {}).get('source_id') in ['simics-dml', 'simics-python']]
         
         return results
         
@@ -214,7 +214,7 @@ def get_available_sources():
         if doc_result.data:
             for row in doc_result.data:
                 metadata = row.get('metadata', {})
-                source = metadata.get('source')
+                source = metadata.get('source_id')
                 if source:
                     doc_sources.add(source)
         
@@ -225,7 +225,7 @@ def get_available_sources():
             if code_result.data:
                 for row in code_result.data:
                     metadata = row.get('metadata', {})
-                    source = metadata.get('source')
+                    source = metadata.get('source_id')
                     if source:
                         code_sources.add(source)
         except:
