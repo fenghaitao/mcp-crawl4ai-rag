@@ -17,6 +17,51 @@ from typing import List, Dict, Any
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+def get_github_commit_hash(simics_base_path: str) -> str:
+    """Get the current GitHub commit hash for the simics repository."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'],
+            cwd=simics_base_path,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout.strip()
+    except Exception as e:
+        logging.warning(f"Failed to get git commit hash: {e}")
+        # Fallback to known commit
+        return "f1b35684a083ae1f33e5f625ba18d2bd50f75f3c"
+
+def get_github_url_for_file(file_path: str, simics_base_path: str) -> str:
+    """Convert a local file path to a GitHub URL."""
+    try:
+        # GitHub repository information
+        github_repo_url = "https://github.com/fenghaitao/simics-7-packages-2025-38-linux64"
+        github_commit = get_github_commit_hash(simics_base_path)
+        
+        # Convert absolute path to relative path within the simics directory
+        file_path = os.path.abspath(file_path)
+        simics_base_path = os.path.abspath(simics_base_path)
+        
+        # Get the relative path from the simics base directory
+        if file_path.startswith(simics_base_path):
+            relative_path = os.path.relpath(file_path, simics_base_path)
+            # Convert Windows-style path separators to forward slashes for URL
+            relative_path = relative_path.replace(os.sep, '/')
+            
+            # Construct GitHub blob URL
+            github_url = f"{github_repo_url}/blob/{github_commit}/{relative_path}"
+            return github_url
+        else:
+            # Fallback to file:// URL if path is outside simics directory
+            return f"file://{file_path}"
+            
+    except Exception as e:
+        logging.warning(f"Failed to generate GitHub URL for {file_path}: {e}")
+        return f"file://{os.path.abspath(file_path)}"
+
 def find_simics_source_files(simics_path: str) -> Dict[str, List[str]]:
     """Find DML and Python files in Simics packages."""
     simics_path = Path(simics_path)
@@ -171,7 +216,7 @@ def process_source_file(file_path: str, file_index: int = 0, total_files: int = 
         logging.error(f"    ❌ Error processing {file_path}: {e}")
         return None
 
-async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], delete_existing: bool = True):
+async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], simics_base_path: str, delete_existing: bool = True):
     """Add processed source files to Supabase."""
     try:
         from utils import get_supabase_client, add_documents_to_supabase
@@ -226,8 +271,8 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], de
                 content = file_data['content']
                 metadata = file_data['metadata']
                 
-                # Create file:// URL for the source file
-                file_url = f"file://{os.path.abspath(file_path)}"
+                # Create GitHub URL for the source file
+                file_url = get_github_url_for_file(file_path, simics_base_path)
                 
                 # Chunk the content
                 chunks = smart_chunk_markdown(content)
@@ -399,8 +444,16 @@ async def crawl_simics_source(delete_existing: bool = True):
     if processed_files:
         # Add to Supabase
         logging.info(f"\n💾 Starting database upload phase...")
+        logging.info(f"   🔗 Using GitHub URLs for source file links")
+        
+        # Show sample URL if we have processed files
+        if processed_files:
+            sample_path = processed_files[0]['file_path']
+            sample_url = get_github_url_for_file(sample_path, simics_path)
+            logging.info(f"   🔍 Sample URL: {sample_url}")
+        
         upload_start_time = time.time()
-        await add_source_files_to_supabase(processed_files, delete_existing)
+        await add_source_files_to_supabase(processed_files, simics_path, delete_existing)
         upload_elapsed = time.time() - upload_start_time
         
         total_elapsed = time.time() - start_time
