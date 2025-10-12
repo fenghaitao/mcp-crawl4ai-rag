@@ -9,6 +9,7 @@ import json
 import asyncio
 import re
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
@@ -25,14 +26,21 @@ def find_simics_source_files(simics_path: str) -> Dict[str, List[str]]:
         return {'dml': [], 'python': []}
     
     logging.info(f"🔍 Searching for source files in: {simics_path}")
+    start_time = time.time()
     
     # Find DML files
+    logging.info("   📄 Scanning for DML files...")
     dml_files = list(simics_path.rglob("*.dml"))
-    logging.info(f"   Found {len(dml_files)} DML files")
+    logging.info(f"   ✅ Found {len(dml_files)} DML files")
     
     # Find Python files
+    logging.info("   🐍 Scanning for Python files...")
     python_files = list(simics_path.rglob("*.py"))
-    logging.info(f"   Found {len(python_files)} Python files")
+    logging.info(f"   ✅ Found {len(python_files)} Python files")
+    
+    elapsed = time.time() - start_time
+    total_files = len(dml_files) + len(python_files)
+    logging.info(f"   🕒 File discovery completed in {elapsed:.1f}s ({total_files} total files)")
     
     return {
         'dml': [str(f) for f in dml_files],
@@ -124,10 +132,11 @@ def determine_source_id(file_type: str) -> str:
     else:
         return "simics-source"
 
-def process_source_file(file_path: str) -> Dict[str, Any]:
+def process_source_file(file_path: str, file_index: int = 0, total_files: int = 0) -> Dict[str, Any]:
     """Process a single source file."""
     try:
-        logging.info(f"  📄 Processing: {Path(file_path).name}")
+        progress_info = f"[{file_index}/{total_files}]" if total_files > 0 else ""
+        logging.info(f"  📄 {progress_info} Processing: {Path(file_path).name}")
         
         # Read file content
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -190,8 +199,11 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], de
             files_by_source[source_id].append(file_data)
         
         # Process each source type
+        source_count = 0
+        total_sources = len(files_by_source)
         for source_id, files in files_by_source.items():
-            logging.info(f"\n📁 Processing {len(files)} files for source: {source_id}")
+            source_count += 1
+            logging.info(f"\n📁 [{source_count}/{total_sources}] Processing {len(files)} files for source: {source_id}")
             
             # Prepare data for batch insertion
             urls = []
@@ -207,7 +219,9 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], de
             all_code_summaries = []
             all_code_metadatas = []
             
+            file_batch_count = 0
             for file_data in files:
+                file_batch_count += 1
                 file_path = file_data['file_path']
                 content = file_data['content']
                 metadata = file_data['metadata']
@@ -217,7 +231,7 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], de
                 
                 # Chunk the content
                 chunks = smart_chunk_markdown(content)
-                logging.info(f"  📦 {Path(file_path).name}: {len(chunks)} chunks")
+                logging.info(f"  📦 [{file_batch_count}/{len(files)}] {Path(file_path).name}: {len(chunks)} chunks")
                 
                 # Add chunks for document storage
                 for i, chunk in enumerate(chunks):
@@ -314,7 +328,8 @@ async def crawl_simics_source(delete_existing: bool = True):
     # Get Simics path from environment
     simics_path = os.getenv("SIMICS_SOURCE_PATH", "simics-7-packages-2025-38-linux64/")
     
-    logging.info(f"🚀 Starting Simics Source Code Crawling")
+    start_time = time.time()
+    logging.info(f"🚀 Starting Simics Source Code Crawling at {datetime.now().strftime('%H:%M:%S')}")
     logging.info(f"📁 Simics path: {simics_path}")
     logging.info("")
     
@@ -331,33 +346,68 @@ async def crawl_simics_source(delete_existing: bool = True):
     # Process all files
     processed_files = []
     success_count = 0
+    file_index = 0
+    processing_start_time = time.time()
+    
+    def log_progress_and_eta(current_file, total_files, start_time):
+        if current_file > 0:
+            elapsed = time.time() - start_time
+            avg_time_per_file = elapsed / current_file
+            remaining_files = total_files - current_file
+            eta_seconds = remaining_files * avg_time_per_file
+            eta_str = f"{int(eta_seconds // 60)}m {int(eta_seconds % 60)}s" if eta_seconds > 60 else f"{int(eta_seconds)}s"
+            progress_pct = (current_file / total_files) * 100
+            logging.info(f"   📈 Progress: {current_file}/{total_files} ({progress_pct:.1f}%) | ETA: {eta_str} | Avg: {avg_time_per_file:.2f}s/file")
     
     # Process DML files
     if source_files['dml']:
         logging.info(f"\n🔧 Processing {len(source_files['dml'])} DML files...")
-        for dml_file in source_files['dml']:
-            result = process_source_file(dml_file)
+        for i, dml_file in enumerate(source_files['dml'], 1):
+            file_index += 1
+            result = process_source_file(dml_file, file_index, total_files)
             if result:
                 processed_files.append(result)
                 success_count += 1
+            
+            # Log progress every 10 files or on important milestones
+            if file_index % 10 == 0 or file_index == total_files or i == len(source_files['dml']):
+                log_progress_and_eta(file_index, total_files, processing_start_time)
     
     # Process Python files
     if source_files['python']:
         logging.info(f"\n🐍 Processing {len(source_files['python'])} Python files...")
-        for py_file in source_files['python']:
-            result = process_source_file(py_file)
+        for i, py_file in enumerate(source_files['python'], 1):
+            file_index += 1
+            result = process_source_file(py_file, file_index, total_files)
             if result:
                 processed_files.append(result)
                 success_count += 1
+            
+            # Log progress every 10 files or on important milestones
+            if file_index % 10 == 0 or file_index == total_files or i == len(source_files['python']):
+                log_progress_and_eta(file_index, total_files, processing_start_time)
+    
+    processing_elapsed = time.time() - processing_start_time
     
     logging.info(f"\n📊 Processing Summary:")
     logging.info(f"   Total files found: {total_files}")
     logging.info(f"   Successfully processed: {success_count}")
     logging.info(f"   Failed: {total_files - success_count}")
+    logging.info(f"   Processing time: {int(processing_elapsed // 60)}m {int(processing_elapsed % 60)}s")
+    logging.info(f"   Average time per file: {processing_elapsed / total_files:.2f}s")
     
     if processed_files:
         # Add to Supabase
+        logging.info(f"\n💾 Starting database upload phase...")
+        upload_start_time = time.time()
         await add_source_files_to_supabase(processed_files, delete_existing)
+        upload_elapsed = time.time() - upload_start_time
+        
+        total_elapsed = time.time() - start_time
+        logging.info(f"\n⏱️ Timing Summary:")
+        logging.info(f"   File processing: {int(processing_elapsed // 60)}m {int(processing_elapsed % 60)}s")
+        logging.info(f"   Database upload: {int(upload_elapsed // 60)}m {int(upload_elapsed % 60)}s")
+        logging.info(f"   Total runtime: {int(total_elapsed // 60)}m {int(total_elapsed % 60)}s")
         return True
     else:
         logging.error("❌ No files were successfully processed")
