@@ -442,7 +442,7 @@ def add_documents_to_supabase(
                 process_args.append((url, content, full_document))
             
             # Process in parallel using ThreadPoolExecutor
-            contextual_contents = []
+            contextual_contents = [None] * len(batch_contents)
             with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
                 # Submit all tasks and collect results
                 future_to_idx = {executor.submit(process_chunk_with_context, arg): idx 
@@ -453,19 +453,18 @@ def add_documents_to_supabase(
                     idx = future_to_idx[future]
                     try:
                         result, success = future.result()
-                        contextual_contents.append(result)
+                        contextual_contents[idx] = result
                         if success:
                             batch_metadatas[idx]["contextual_embedding"] = True
                     except Exception as e:
                         print(f"Error processing chunk {idx}: {e}")
                         # Use original content as fallback
-                        contextual_contents.append(batch_contents[idx])
+                        contextual_contents[idx] = batch_contents[idx]
             
-            # Sort results back into original order if needed
-            if len(contextual_contents) != len(batch_contents):
-                print(f"Warning: Expected {len(batch_contents)} results but got {len(contextual_contents)}")
-                # Use original contents as fallback
-                contextual_contents = batch_contents
+            # Ensure all positions are filled; fall back to original content where needed
+            for j in range(len(contextual_contents)):
+                if contextual_contents[j] is None:
+                    contextual_contents[j] = batch_contents[j]
         else:
             # If not using contextual embeddings, use original contents
             contextual_contents = batch_contents

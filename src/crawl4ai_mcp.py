@@ -459,7 +459,7 @@ def process_code_example(args):
     return generate_code_example_summary(code, context_before, context_after)
 
 @mcp.tool()
-async def crawl_single_page(ctx: Context, url: str, disable_javascript: bool = None) -> str:
+async def crawl_single_page(ctx: Context, url: str, disable_javascript: bool = None, chunk_size: int = 5000) -> str:
     """
     Crawl a single web page and store its content in Supabase.
     
@@ -470,6 +470,7 @@ async def crawl_single_page(ctx: Context, url: str, disable_javascript: bool = N
         ctx: The MCP server provided context
         url: URL of the web page to crawl
         disable_javascript: If True, disables JavaScript to get only static content (no redirects)
+        chunk_size: Maximum size of each content chunk in characters (default: 5000)
     
     Returns:
         Summary of the crawling operation and storage in Supabase
@@ -518,8 +519,8 @@ async def crawl_single_page(ctx: Context, url: str, disable_javascript: bool = N
             source_id = parsed_url.netloc or parsed_url.path
             
             # Chunk the content
-            chunks = smart_chunk_markdown(result.markdown)
-            print(f"   📦 Split into {len(chunks)} chunks (target: ~5000 chars per chunk)")
+            chunks = smart_chunk_markdown(result.markdown, chunk_size=chunk_size)
+            print(f"   📦 Split into {len(chunks)} chunks (target: ~{chunk_size} chars per chunk)")
             
             # Prepare data for Supabase
             urls = []
@@ -555,6 +556,7 @@ async def crawl_single_page(ctx: Context, url: str, disable_javascript: bool = N
             add_documents_to_supabase(supabase_client, urls, chunk_numbers, contents, metadatas, url_to_full_document)
             
             # Extract and process code examples only if enabled
+            code_blocks = None
             extract_code_examples = os.getenv("USE_AGENTIC_RAG", "false") == "true"
             if extract_code_examples:
                 code_blocks = extract_code_blocks(result.markdown)
@@ -758,6 +760,7 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
         add_documents_to_supabase(supabase_client, urls, chunk_numbers, contents, metadatas, url_to_full_document, batch_size=batch_size)
         
         # Extract and process code examples from all documents only if enabled
+        code_examples = []
         extract_code_examples_enabled = os.getenv("USE_AGENTIC_RAG", "false") == "true"
         if extract_code_examples_enabled:
             all_code_blocks = []
@@ -821,7 +824,7 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
             "crawl_type": crawl_type,
             "pages_crawled": len(crawl_results),
             "chunks_stored": chunk_count,
-            "code_examples_stored": len(code_examples),
+            "code_examples_stored": len(code_examples) if code_examples else 0,
             "sources_updated": len(source_content_map),
             "urls_crawled": [doc['url'] for doc in crawl_results][:5] + (["..."] if len(crawl_results) > 5 else [])
         }, indent=2)
@@ -867,7 +870,7 @@ async def get_available_sources(ctx: Context) -> str:
                 sources.append({
                     "source_id": source.get("source_id"),
                     "summary": source.get("summary"),
-                    "total_words": source.get("total_words"),
+                    "total_word_count": source.get("total_word_count"),
                     "created_at": source.get("created_at"),
                     "updated_at": source.get("updated_at")
                 })
