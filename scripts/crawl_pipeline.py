@@ -68,7 +68,9 @@ def check_file_exists(filepath: str, description: str) -> bool:
 def main():
     """Main pipeline function."""
     parser = argparse.ArgumentParser(description='Complete crawling pipeline for local content')
-    parser.add_argument('input_url', help='Initial URL to extract links from (e.g., sitemap or index page)')
+    parser.add_argument('input_url', help='URL to process (single page or site index/sitemap)')
+    parser.add_argument('--mode', choices=['single', 'site'], default='site',
+                       help='Download mode: "single" for one page, "site" for full site (default: site)')
     parser.add_argument('--output-dir', '-o', default='./pipeline_output', 
                        help='Directory for all pipeline outputs (default: ./pipeline_output)')
     parser.add_argument('--skip-cleanup', action='store_true',
@@ -78,7 +80,7 @@ def main():
     parser.add_argument('--skip-download', action='store_true',
                        help='Skip page download (use existing local files)')
     parser.add_argument('--max-urls', type=int, default=None,
-                       help='Maximum number of URLs to process')
+                       help='Maximum number of URLs to process (site mode only)')
     parser.add_argument('--skip-simics-source', action='store_true',
                        help='Skip Simics source code crawling')
     
@@ -93,13 +95,14 @@ def main():
     local_urls_file = output_dir / "local_urls.json"
     
     print(f"🚀 Starting Crawling Pipeline")
+    print(f"Mode: {args.mode.upper()}")
     print(f"Input URL: {args.input_url}")
     print(f"Output directory: {output_dir}")
     print(f"Skip cleanup: {args.skip_cleanup}")
     print(f"Skip extraction: {args.skip_extraction}")
     print(f"Skip download: {args.skip_download}")
     print(f"Skip Simics source: {args.skip_simics_source}")
-    if args.max_urls:
+    if args.max_urls and args.mode == 'site':
         print(f"Max URLs to process: {args.max_urls}")
     
     # Get the correct Python executable
@@ -116,52 +119,71 @@ def main():
     else:
         print("\n🔄 Skipping database cleanup (--skip-cleanup)")
     
-    # Step 2: Extract URLs from input URL
-    if not args.skip_extraction:
-        extract_command = [
-            python_exe, "scripts/extract_simics_urls.py", 
-            args.input_url, 
-            "--output", str(extracted_urls_file)
-        ]
-        if args.max_urls:
-            extract_command.extend(["--max-urls", str(args.max_urls)])
+    # Step 2: Download content based on mode
+    if args.mode == 'single':
+        # Single page mode - use download_single_page.py
+        if not args.skip_download:
+            download_success = run_command([
+                python_exe, "scripts/download_single_page.py",
+                args.input_url,
+                "--output-dir", str(output_dir)
+            ], "Single Page Download")
+            if not download_success:
+                print("❌ Single page download failed. Cannot continue.")
+                return
+        else:
+            print(f"\n🔄 Skipping single page download (--skip-download)")
+            if not (output_dir / "downloaded_pages").exists() or not list((output_dir / "downloaded_pages").glob("*.html")):
+                print("❌ No existing downloaded pages found. Cannot continue without download.")
+                return
+    else:
+        # Site mode - extract URLs then download pages
+        # Step 2a: Extract URLs from input URL
+        if not args.skip_extraction:
+            extract_command = [
+                python_exe, "scripts/extract_simics_urls.py", 
+                args.input_url, 
+                "--output", str(extracted_urls_file)
+            ]
+            if args.max_urls:
+                extract_command.extend(["--max-urls", str(args.max_urls)])
+                
+            extract_success = run_command(extract_command, "URL Extraction")
+            if not extract_success:
+                print("❌ URL extraction failed. Cannot continue.")
+                return
             
-        extract_success = run_command(extract_command, "URL Extraction")
-        if not extract_success:
-            print("❌ URL extraction failed. Cannot continue.")
-            return
+            # Verify the output file was created
+            if not check_file_exists(str(extracted_urls_file), "Extracted URLs file"):
+                print("❌ URL extraction appeared to succeed but output file not found. Cannot continue.")
+                return
+        else:
+            print(f"\n🔄 Skipping URL extraction (--skip-extraction)")
+            if not check_file_exists(str(extracted_urls_file), "Existing URLs file"):
+                print("❌ No existing URLs file found. Cannot continue without URL extraction.")
+                return
         
-        # Verify the output file was created
-        if not check_file_exists(str(extracted_urls_file), "Extracted URLs file"):
-            print("❌ URL extraction appeared to succeed but output file not found. Cannot continue.")
-            return
-    else:
-        print(f"\n🔄 Skipping URL extraction (--skip-extraction)")
-        if not check_file_exists(str(extracted_urls_file), "Existing URLs file"):
-            print("❌ No existing URLs file found. Cannot continue without URL extraction.")
-            return
-    
-    # Step 3: Download pages locally
-    if not args.skip_download:
-        download_success = run_command([
-            python_exe, "scripts/download_pages_locally.py",
-            str(extracted_urls_file),
-            "--output-dir", str(downloaded_pages_dir),
-            "--output-json", str(local_urls_file)
-        ], "Local Page Download")
-        if not download_success:
-            print("❌ Page download failed. Cannot continue.")
-            return
-        
-        # Verify the output file was created
-        if not check_file_exists(str(local_urls_file), "Local URLs file"):
-            print("❌ Page download appeared to succeed but output file not found. Cannot continue.")
-            return
-    else:
-        print(f"\n🔄 Skipping page download (--skip-download)")
-        if not check_file_exists(str(local_urls_file), "Existing local URLs file"):
-            print("❌ No existing local URLs file found. Cannot continue without download.")
-            return
+        # Step 2b: Download pages locally
+        if not args.skip_download:
+            download_success = run_command([
+                python_exe, "scripts/download_pages_locally.py",
+                str(extracted_urls_file),
+                "--output-dir", str(downloaded_pages_dir),
+                "--output-json", str(local_urls_file)
+            ], "Local Page Download")
+            if not download_success:
+                print("❌ Page download failed. Cannot continue.")
+                return
+            
+            # Verify the output file was created
+            if not check_file_exists(str(local_urls_file), "Local URLs file"):
+                print("❌ Page download appeared to succeed but output file not found. Cannot continue.")
+                return
+        else:
+            print(f"\n🔄 Skipping page download (--skip-download)")
+            if not check_file_exists(str(local_urls_file), "Existing local URLs file"):
+                print("❌ No existing local URLs file found. Cannot continue without download.")
+                return
     
     # Step 4: Crawl local files and update database
     crawl_success = run_command([
@@ -174,7 +196,7 @@ def main():
         return
     
     # Step 5: Crawl Simics source code (if enabled and not skipped)
-    simics_enabled = os.getenv("CRAWL_SIMICS_SOURCE", "false").lower() == "true"
+    simics_source_enabled = os.getenv("CRAWL_SIMICS_SOURCE", "false").lower() == "true"
     if args.skip_simics_source:
         print("\n🔄 Skipping Simics source crawling (--skip-simics-source)")
         simics_success = True  # Don't fail the pipeline if skipped via argument
@@ -198,9 +220,13 @@ def main():
     if crawl_success:
         print("✅ All steps completed successfully!")
         print("\nFiles created:")
-        print(f"  📄 Extracted URLs: {extracted_urls_file}")
-        print(f"  📁 Downloaded pages: {downloaded_pages_dir}")
-        print(f"  📄 Local URLs: {local_urls_file}")
+        if args.mode == 'single':
+            print(f"  📁 Downloaded page: {downloaded_pages_dir}")
+            print(f"  📄 Sitemap: {output_dir / 'sitemap.txt'}")
+        else:
+            print(f"  📄 Extracted URLs: {extracted_urls_file}")
+            print(f"  📁 Downloaded pages: {downloaded_pages_dir}")
+            print(f"  📄 Local URLs: {local_urls_file}")
         print("\n🗄️  Database has been updated with local content")
         print("🔍 You can now perform RAG queries on the clean, local content")
     else:
@@ -209,9 +235,13 @@ def main():
     
     print(f"\n💡 To rerun parts of the pipeline:")
     print(f"   Skip cleanup: --skip-cleanup")
-    print(f"   Skip extraction: --skip-extraction") 
+    if args.mode == 'site':
+        print(f"   Skip extraction: --skip-extraction") 
     print(f"   Skip download: --skip-download")
     print(f"   Skip Simics source: --skip-simics-source")
+    print(f"\n💡 Usage examples:")
+    print(f"   Single page: python scripts/crawl_pipeline.py --mode single https://example.com/page.html")
+    print(f"   Full site: python scripts/crawl_pipeline.py --mode site https://example.com/sitemap.html")
 
 if __name__ == "__main__":
     main()
