@@ -79,6 +79,8 @@ def main():
                        help='Skip page download (use existing local files)')
     parser.add_argument('--max-urls', type=int, default=None,
                        help='Maximum number of URLs to process')
+    parser.add_argument('--skip-simics-source', action='store_true',
+                       help='Skip Simics source code crawling')
     
     args = parser.parse_args()
     
@@ -96,6 +98,7 @@ def main():
     print(f"Skip cleanup: {args.skip_cleanup}")
     print(f"Skip extraction: {args.skip_extraction}")
     print(f"Skip download: {args.skip_download}")
+    print(f"Skip Simics source: {args.skip_simics_source}")
     if args.max_urls:
         print(f"Max URLs to process: {args.max_urls}")
     
@@ -170,9 +173,12 @@ def main():
         print("❌ Local file crawling failed. Cannot continue.")
         return
     
-    # Step 5: Crawl Simics source code (if enabled)
+    # Step 5: Crawl Simics source code (if enabled and not skipped)
     simics_enabled = os.getenv("CRAWL_SIMICS_SOURCE", "false").lower() == "true"
-    if simics_enabled:
+    if args.skip_simics_source:
+        print("\n🔄 Skipping Simics source crawling (--skip-simics-source)")
+        simics_success = True  # Don't fail the pipeline if skipped via argument
+    elif simics_source_enabled:
         simics_success = run_command([
             python_exe, "scripts/crawl_simics_source.py",
             "--output-dir", str(output_dir)
@@ -205,6 +211,7 @@ def main():
     print(f"   Skip cleanup: --skip-cleanup")
     print(f"   Skip extraction: --skip-extraction") 
     print(f"   Skip download: --skip-download")
+    print(f"   Skip Simics source: --skip-simics-source")
 
 if __name__ == "__main__":
     main()
