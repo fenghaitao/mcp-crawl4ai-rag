@@ -1211,7 +1211,7 @@ async def perform_rag_query(ctx: Context, query: str, source_type: str = "all", 
         return json.dumps({
             "success": True,
             "query": query,
-            "source_filter": source,
+            "source_type": source_type,
             "search_mode": "hybrid" if use_hybrid_search else "vector",
             "reranking_applied": reranking_applied,
             "results": formatted_results,
