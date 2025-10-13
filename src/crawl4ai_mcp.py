@@ -296,6 +296,134 @@ mcp = FastMCP(
     port=os.getenv("PORT", "8051")
 )
 
+def combine_hybrid_results(vector_results: List[Dict[str, Any]], keyword_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Combine vector and keyword search results with preference for items appearing in both.
+    
+    Args:
+        vector_results: Results from vector search
+        keyword_results: Results from keyword search
+        
+    Returns:
+        Combined and deduplicated results
+    """
+    seen_ids = set()
+    combined_results = []
+    
+    # First, add items that appear in both searches (these are the best matches)
+    vector_ids = {r.get('id') for r in vector_results if r.get('id')}
+    both_searches_count = 0
+    
+    for kr in keyword_results:
+        if kr.get('id') in vector_ids and kr.get('id') not in seen_ids:
+            # Find the vector result to get similarity score
+            for vr in vector_results:
+                if vr.get('id') == kr.get('id'):
+                    # Boost similarity score for items in both results
+                    vr['similarity'] = min(1.0, vr.get('similarity', 0) * 1.2)
+                    combined_results.append(vr)
+                    seen_ids.add(kr.get('id'))
+                    both_searches_count += 1
+                    break
+    
+    # Then add remaining vector results (semantic matches without exact keyword)
+    vector_only_count = 0
+    for vr in vector_results:
+        if vr.get('id') and vr['id'] not in seen_ids:
+            combined_results.append(vr)
+            seen_ids.add(vr['id'])
+            vector_only_count += 1
+    
+    # Finally, add pure keyword matches if needed
+    keyword_only_count = 0
+    for kr in keyword_results:
+        if kr.get('id') not in seen_ids:
+            # Convert keyword result to match vector result format
+            combined_results.append({
+                'id': kr.get('id'),
+                'url': kr.get('url'),
+                'chunk_number': kr.get('chunk_number'),
+                'content': kr.get('content'),
+                'metadata': kr.get('metadata'),
+                'source_id': kr.get('source_id'),
+                'similarity': 0.5  # Default similarity for keyword-only matches
+            })
+            seen_ids.add(kr.get('id'))
+            keyword_only_count += 1
+    
+    # Sort by similarity score
+    combined_results.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+    
+    print(f"      📊 Hybrid combination: {both_searches_count} both + {vector_only_count} vector + {keyword_only_count} keyword")
+    
+    return combined_results
+
+def execute_multi_source_search(
+    supabase_client: Client, 
+    query: str, 
+    source_ids: List[str], 
+    match_count: int, 
+    use_hybrid_search: bool
+) -> List[Dict[str, Any]]:
+    """
+    Execute search across multiple sources and combine results.
+    
+    Args:
+        supabase_client: Supabase client
+        query: Search query
+        source_ids: List of source IDs to search
+        match_count: Number of results to return
+        use_hybrid_search: Whether to use hybrid search
+        
+    Returns:
+        Combined search results from all sources
+    """
+    all_results = []
+    
+    for source_id in source_ids:
+        source_filter = {"source_id": source_id}
+        print(f"   🎯 Querying source: {source_id}")
+        
+        if use_hybrid_search:
+            # Vector search for this source
+            vector_results = search_documents(
+                client=supabase_client,
+                query=query,
+                match_count=match_count,
+                filter_metadata=source_filter
+            )
+            
+            # Keyword search for this source
+            keyword_query = supabase_client.from_('crawled_pages')\
+                .select('id, url, chunk_number, content, metadata, source_id')\
+                .ilike('content', f'%{query}%')\
+                .eq('source_id', source_id)\
+                .limit(match_count)
+            
+            keyword_response = keyword_query.execute()
+            keyword_results = keyword_response.data if keyword_response.data else []
+            
+            # Combine for this source
+            source_results = combine_hybrid_results(vector_results, keyword_results)
+        else:
+            # Standard vector search for this source
+            source_results = search_documents(
+                client=supabase_client,
+                query=query,
+                match_count=match_count,
+                filter_metadata=source_filter
+            )
+        
+        all_results.extend(source_results)
+        print(f"      ✅ Found {len(source_results)} results from {source_id}")
+    
+    # Sort all results by similarity and take top results
+    all_results.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+    final_results = all_results[:match_count]
+    print(f"   🔗 Combined results: {len(final_results)} total from {len(source_ids)} sources")
+    
+    return final_results
+
 def rerank_results(model: CrossEncoder, query: str, results: List[Dict[str, Any]], content_key: str = "content") -> List[Dict[str, Any]]:
     """
     Rerank search results using a cross-encoder model.
@@ -887,18 +1015,23 @@ async def get_available_sources(ctx: Context) -> str:
         }, indent=2)
 
 @mcp.tool()
-async def perform_rag_query(ctx: Context, query: str, source: str = None, match_count: int = 5) -> str:
+async def perform_rag_query(ctx: Context, query: str, source_type: str = "all", match_count: int = 5) -> str:
     """
     Perform a RAG (Retrieval Augmented Generation) query on the stored content.
     
     This tool searches the vector database for content relevant to the query and returns
-    the matching documents. Optionally filter by source domain.
+    the matching documents with intelligent source type filtering for Simics development.
     Get the source by using the get_available_sources tool before calling this search!
     
     Args:
         ctx: The MCP server provided context
         query: The search query
-        source: Optional source domain to filter results (e.g., 'example.com')
+        source_type: Type of source to search. Options:
+                    - 'all': Search all sources (default)
+                    - 'docs': Search documentation sources only (excludes Simics sources)
+                    - 'dml': Search Simics DML sources only (simics-dml)
+                    - 'python': Search Simics Python sources only (simics-python)  
+                    - 'source': Search both Simics DML and Python sources (simics-dml + simics-python)
         match_count: Maximum number of results to return (default: 5)
     
     Returns:
@@ -907,7 +1040,7 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
     try:
         print(f"\n🔍 RAG Query Starting:")
         print(f"   Query: '{query}'")
-        print(f"   Source filter: {source if source else 'None'}")
+        print(f"   Source type: {source_type}")
         print(f"   Match count: {match_count}")
         
         # Get the Supabase client from the context
@@ -923,93 +1056,100 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
         print(f"   Reranking: {'✅ Enabled' if use_reranking else '❌ Disabled'}")
         print(f"   Reranking model loaded: {'✅ Yes' if reranking_model else '❌ No'}")
         
-        # Prepare filter if source is provided and not empty
+        # Prepare filter based on source_type parameter - use database-level filtering
         filter_metadata = None
-        if source and source.strip():
-            filter_metadata = {"source": source}
-            print(f"🎯 Source filtering applied: {source}")
+        source_ids_to_search = None
         
-        if use_hybrid_search:
-            # Hybrid search: combine vector and keyword search
-            print(f"🔄 Using hybrid search (vector + keyword)")
+        if source_type == "dml":
+            filter_metadata = {"source_id": "simics-dml"}
+            print(f"🎯 Database filter: simics-dml only")
+        elif source_type == "python":
+            filter_metadata = {"source_id": "simics-python"}
+            print(f"🎯 Database filter: simics-python only")
+        elif source_type == "source":
+            # For multiple sources, we'll need to make two separate queries and combine
+            source_ids_to_search = ["simics-dml", "simics-python"]
+            print(f"🎯 Database filter: simics-dml + simics-python (dual query)")
+        elif source_type == "docs":
+            # For docs, get all non-simics sources and query them
+            # Get all available sources first, then filter out simics sources
+            sources_result = supabase_client.from_('sources').select('source_id').execute()
+            if sources_result.data:
+                non_simics_sources = [s['source_id'] for s in sources_result.data 
+                                    if s['source_id'] not in ['simics-dml', 'simics-python']]
+                if non_simics_sources:
+                    source_ids_to_search = non_simics_sources
+                    print(f"🎯 Documentation filter: searching {len(non_simics_sources)} non-simics sources (excludes simics-dml, simics-python)")
+        elif source_type == "all":
+            print(f"🌐 No filtering: searching all sources")
+        else:
+            print(f"⚠️  Unknown source_type '{source_type}', defaulting to 'all'")
+        
+        # Execute search based on source filtering strategy
+        if source_ids_to_search:
+            # Multiple source IDs: make separate queries and combine results
+            print(f"🔄 Executing multi-source queries for: {source_ids_to_search}")
+            results = execute_multi_source_search(
+                supabase_client, query, source_ids_to_search, match_count, use_hybrid_search
+            )
             
-            # 1. Get vector search results (get more to account for filtering)
-            print(f"   🎯 Performing vector search (requesting {match_count * 2} results)...")
+        elif source_type == "docs":
+            # Get all non-simics sources from the database
+            print(f"🔄 Getting non-simics sources for docs search...")
+            try:
+                sources_result = supabase_client.from_('sources')\
+                    .select('source_id')\
+                    .not_.in_('source_id', ['simics-dml', 'simics-python'])\
+                    .execute()
+                
+                docs_source_ids = [row['source_id'] for row in sources_result.data] if sources_result.data else []
+                print(f"   📚 Found {len(docs_source_ids)} documentation sources: {docs_source_ids}")
+                
+                if docs_source_ids:
+                    results = execute_multi_source_search(
+                        supabase_client, query, docs_source_ids, match_count, use_hybrid_search
+                    )
+                else:
+                    print(f"   ⚠️  No documentation sources found")
+                    results = []
+            except Exception as e:
+                print(f"   ❌ Error getting docs sources: {e}, falling back to post-filter")
+                # Fallback to post-filtering if source query fails
+                results = search_documents(
+                    client=supabase_client,
+                    query=query,
+                    match_count=match_count * 2,  # Get more for filtering
+                    filter_metadata=None
+                )
+                results = [r for r in results if r.get('source_id') not in ['simics-dml', 'simics-python']][:match_count]
+            
+        elif use_hybrid_search:
+            # Single source or no source filter with hybrid search
+            print(f"🔄 Using hybrid search")
+            
+            # Vector search
             vector_results = search_documents(
                 client=supabase_client,
                 query=query,
-                match_count=match_count * 2,  # Get double to have room for filtering
+                match_count=match_count,
                 filter_metadata=filter_metadata
             )
-            print(f"   ✅ Vector search returned {len(vector_results)} results")
             
-            # 2. Get keyword search results using ILIKE
-            print(f"   🔤 Performing keyword search...")
+            # Keyword search
             keyword_query = supabase_client.from_('crawled_pages')\
                 .select('id, url, chunk_number, content, metadata, source_id')\
                 .ilike('content', f'%{query}%')
             
             # Apply source filter if provided
-            if source and source.strip():
-                keyword_query = keyword_query.eq('source_id', source)
+            if filter_metadata and "source_id" in filter_metadata:
+                keyword_query = keyword_query.eq('source_id', filter_metadata["source_id"])
             
-            # Execute keyword search
-            keyword_response = keyword_query.limit(match_count * 2).execute()
+            keyword_response = keyword_query.limit(match_count).execute()
             keyword_results = keyword_response.data if keyword_response.data else []
-            print(f"   ✅ Keyword search returned {len(keyword_results)} results")
             
-            # 3. Combine results with preference for items appearing in both
-            print(f"   🔗 Combining vector and keyword results...")
-            seen_ids = set()
-            combined_results = []
-            
-            # First, add items that appear in both searches (these are the best matches)
-            vector_ids = {r.get('id') for r in vector_results if r.get('id')}
-            both_searches_count = 0
-            for kr in keyword_results:
-                if kr['id'] in vector_ids and kr['id'] not in seen_ids:
-                    # Find the vector result to get similarity score
-                    for vr in vector_results:
-                        if vr.get('id') == kr['id']:
-                            # Boost similarity score for items in both results
-                            vr['similarity'] = min(1.0, vr.get('similarity', 0) * 1.2)
-                            combined_results.append(vr)
-                            seen_ids.add(kr['id'])
-                            both_searches_count += 1
-                            break
-            
-            # Then add remaining vector results (semantic matches without exact keyword)
-            vector_only_count = 0
-            for vr in vector_results:
-                if vr.get('id') and vr['id'] not in seen_ids and len(combined_results) < match_count:
-                    combined_results.append(vr)
-                    seen_ids.add(vr['id'])
-                    vector_only_count += 1
-            
-            # Finally, add pure keyword matches if we still need more results
-            keyword_only_count = 0
-            for kr in keyword_results:
-                if kr['id'] not in seen_ids and len(combined_results) < match_count:
-                    # Convert keyword result to match vector result format
-                    combined_results.append({
-                        'id': kr['id'],
-                        'url': kr['url'],
-                        'chunk_number': kr['chunk_number'],
-                        'content': kr['content'],
-                        'metadata': kr['metadata'],
-                        'source_id': kr['source_id'],
-                        'similarity': 0.5  # Default similarity for keyword-only matches
-                    })
-                    seen_ids.add(kr['id'])
-                    keyword_only_count += 1
-            
-            print(f"   📊 Hybrid search combination:")
-            print(f"      Both searches: {both_searches_count} results (boosted similarity)")
-            print(f"      Vector only: {vector_only_count} results")
-            print(f"      Keyword only: {keyword_only_count} results")
-            
-            # Use combined results
-            results = combined_results[:match_count]
+            # Combine results
+            results = combine_hybrid_results(vector_results, keyword_results)
+            print(f"   ✅ Hybrid search returned {len(results)} results")
             
         else:
             # Standard vector search only
@@ -1022,7 +1162,7 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
             )
             print(f"   ✅ Vector search returned {len(results)} results")
         
-        print(f"📈 Initial search completed: {len(results)} results before reranking")
+        print(f"📈 Search completed: {len(results)} results before reranking")
         
         # Apply reranking if enabled
         reranking_applied = False
@@ -1037,9 +1177,12 @@ async def perform_rag_query(ctx: Context, query: str, source: str = None, match_
             if results:
                 print(f"   📊 Top rerank scores:")
                 for i, result in enumerate(results[:3]):
-                    rerank_score = result.get("rerank_score", "N/A")
-                    similarity = result.get("similarity", "N/A")
-                    print(f"      #{i+1}: rerank={rerank_score:.4f}, similarity={similarity:.4f}")
+                    rerank_score = result.get("rerank_score", 0)
+                    similarity = result.get("similarity", 0)
+                    if isinstance(rerank_score, (int, float)) and isinstance(similarity, (int, float)):
+                        print(f"      #{i+1}: rerank={rerank_score:.4f}, similarity={similarity:.4f}")
+                    else:
+                        print(f"      #{i+1}: rerank={rerank_score}, similarity={similarity}")
         else:
             if use_reranking and not reranking_model:
                 print(f"⚠️  Reranking enabled but model not loaded - skipping reranking")

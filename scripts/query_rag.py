@@ -12,13 +12,12 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-def query_documents(query: str, source_filter: str = None, source_type: str = 'all', match_count: int = 5, use_hybrid: bool = False):
+def query_documents(query: str, source_type: str = 'all', match_count: int = 5, use_hybrid: bool = False):
     """
     Query the document database.
     
     Args:
         query: Search query
-        source_filter: Optional source domain filter (legacy)
         source_type: Source type filter ('docs', 'dml', 'python', 'source', 'all')
         match_count: Number of results to return
         use_hybrid: Whether to use hybrid search
@@ -31,20 +30,26 @@ def query_documents(query: str, source_filter: str = None, source_type: str = 'a
         
         client = get_supabase_client()
         
-        # Determine filter based on source_type
+        # Determine filter based on source_type - use source_id filtering like perform_rag_query
         filter_metadata = None
+        non_simics_sources = None
+        
         if source_type == 'docs':
-            filter_metadata = {"source_id": "intel.github.io"}
+            # For docs, search all non-simics sources by excluding simics-dml and simics-python
+            # Get all available sources first, then filter out simics sources
+            sources_result = client.from_('sources').select('source_id').execute()
+            if sources_result.data:
+                non_simics_sources = [s['source_id'] for s in sources_result.data 
+                                    if s['source_id'] not in ['simics-dml', 'simics-python']]
+                if non_simics_sources:
+                    print(f"🎯 Documentation filter: searching {len(non_simics_sources)} non-simics sources (excludes simics-dml, simics-python)")
         elif source_type == 'dml':
             filter_metadata = {"source_id": "simics-dml"}
         elif source_type == 'python':
             filter_metadata = {"source_id": "simics-python"}
         elif source_type == 'source':
-            # Need to search multiple sources - we'll handle this differently
-            filter_metadata = None  # Will filter after query
-        elif source_filter:
-            # Legacy source_filter parameter
-            filter_metadata = {"source_id": source_filter}
+            # For simics sources, we'll search simics-dml and simics-python
+            pass  # Will handle in multi-source section below
         
         print(f"🔍 Searching documents...")
         print(f"   Query: '{query}'")
@@ -57,16 +62,53 @@ def query_documents(query: str, source_filter: str = None, source_type: str = 'a
         if use_hybrid:
             os.environ["USE_HYBRID_SEARCH"] = "true"
         
-        results = search_documents(
-            client=client,
-            query=query,
-            match_count=match_count,
-            filter_metadata=filter_metadata
-        )
-        
-        # Post-filter for 'source' type (both DML and Python)
+        # Handle multi-source search for 'source' and 'docs' types
         if source_type == 'source':
-            results = [r for r in results if r.get('metadata', {}).get('source_id') in ['simics-dml', 'simics-python']]
+            # Search both simics-dml and simics-python sources
+            all_results = []
+            
+            for source_id in ['simics-dml', 'simics-python']:
+                source_filter_meta = {"source_id": source_id}
+                source_results = search_documents(
+                    client=client,
+                    query=query,
+                    match_count=match_count,
+                    filter_metadata=source_filter_meta
+                )
+                all_results.extend(source_results)
+                print(f"   🎯 Found {len(source_results)} results from {source_id}")
+            
+            # Sort by similarity and take top results
+            all_results.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+            results = all_results[:match_count]
+            print(f"   🔗 Combined results: {len(results)} total from simics sources")
+        elif source_type == 'docs' and non_simics_sources:
+            # Search all non-simics sources
+            all_results = []
+            
+            for source_id in non_simics_sources:
+                source_filter_meta = {"source_id": source_id}
+                source_results = search_documents(
+                    client=client,
+                    query=query,
+                    match_count=match_count,
+                    filter_metadata=source_filter_meta
+                )
+                all_results.extend(source_results)
+                print(f"   🎯 Found {len(source_results)} results from {source_id}")
+            
+            # Sort by similarity and take top results
+            all_results.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+            results = all_results[:match_count]
+            print(f"   🔗 Combined results: {len(results)} total from {len(non_simics_sources)} documentation sources")
+        else:
+            # Single source search
+            results = search_documents(
+                client=client,
+                query=query,
+                match_count=match_count,
+                filter_metadata=filter_metadata
+            )
         
         return results
         
@@ -125,6 +167,13 @@ def query_code_examples(query: str, source_filter: str = None, source_type: str 
         # Post-filter for 'source' type (both DML and Python)
         if source_type == 'source':
             results = [r for r in results if r.get('metadata', {}).get('source_id') in ['simics-dml', 'simics-python']]
+            # Single source search
+            results = search_code_examples(
+                client=client,
+                query=query,
+                match_count=match_count,
+                filter_metadata=filter_metadata
+            )
         
         return results
         
@@ -208,31 +257,13 @@ def get_available_sources():
         
         client = get_supabase_client()
         
-        # Get unique sources from crawled_pages
-        doc_result = client.table("crawled_pages").select("metadata").execute()
-        doc_sources = set()
-        if doc_result.data:
-            for row in doc_result.data:
-                metadata = row.get('metadata', {})
-                source = metadata.get('source_id')
-                if source:
-                    doc_sources.add(source)
-        
-        # Get unique sources from code_examples if table exists
-        code_sources = set()
-        try:
-            code_result = client.table("code_examples").select("metadata").execute()
-            if code_result.data:
-                for row in code_result.data:
-                    metadata = row.get('metadata', {})
-                    source = metadata.get('source_id')
-                    if source:
-                        code_sources.add(source)
-        except:
-            pass  # code_examples table might not exist
-        
-        all_sources = doc_sources.union(code_sources)
-        return sorted(list(all_sources))
+        # Get sources from the sources table, just like other functions do
+        sources_result = client.from_('sources').select('source_id').execute()
+        if sources_result.data:
+            all_sources = [s['source_id'] for s in sources_result.data]
+            return sorted(all_sources)
+        else:
+            return []
         
     except Exception as e:
         print(f"❌ Error getting sources: {e}")
@@ -242,12 +273,11 @@ def main():
     """Main function."""
     parser = argparse.ArgumentParser(description='Query the RAG database')
     parser.add_argument('query', nargs='?', help='Search query (required unless --list-sources)')
-    parser.add_argument('--source', '-s', help='Filter by source domain (e.g., intel.github.io)')
     parser.add_argument('--count', '-c', type=int, default=5, help='Number of results (default: 5)')
     parser.add_argument('--type', '-t', choices=['docs', 'code', 'both'], default='docs',
                        help='Search type: docs, code, or both (default: docs)')
     parser.add_argument('--source-type', choices=['docs', 'dml', 'python', 'source', 'all'], default='all',
-                       help='Filter by source: docs, dml, python, source (dml+python), or all (default: all)')
+                       help='Filter by source type: docs (non-simics sources), dml (simics-dml), python (simics-python), source (dml+python), or all (default: all)')
     parser.add_argument('--hybrid', action='store_true', help='Use hybrid search for documents')
     parser.add_argument('--list-sources', action='store_true', help='List available sources and exit')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
@@ -288,7 +318,6 @@ def main():
         print("=" * 50)
         doc_results = query_documents(
             query=args.query,
-            source_filter=args.source,
             source_type=args.source_type,
             match_count=args.count,
             use_hybrid=args.hybrid
