@@ -79,6 +79,8 @@ def main():
                        help='Skip URL extraction (use existing URLs file)')
     parser.add_argument('--skip-download', action='store_true',
                        help='Skip page download (use existing local files)')
+    parser.add_argument('--skip-crawl', action='store_true',
+                       help='Skip local file crawling and database storage')
     parser.add_argument('--max-urls', type=int, default=None,
                        help='Maximum number of URLs to process (site mode only)')
     parser.add_argument('--skip-simics-source', action='store_true',
@@ -101,6 +103,7 @@ def main():
     print(f"Skip cleanup: {args.skip_cleanup}")
     print(f"Skip extraction: {args.skip_extraction}")
     print(f"Skip download: {args.skip_download}")
+    print(f"Skip crawl: {args.skip_crawl}")
     print(f"Skip Simics source: {args.skip_simics_source}")
     if args.max_urls and args.mode == 'site':
         print(f"Max URLs to process: {args.max_urls}")
@@ -185,17 +188,21 @@ def main():
                 print("❌ No existing local URLs file found. Cannot continue without download.")
                 return
     
-    # Step 4: Crawl local files and update database
-    crawl_success = run_command([
-        python_exe, "scripts/crawl_local_files.py",
-        str(downloaded_pages_dir)  # Pass the directory, not the JSON file
-    ], "Local File Crawling")
+    # Step 3: Crawl local files and update database
+    if not args.skip_crawl:
+        crawl_success = run_command([
+            python_exe, "scripts/crawl_local_files.py",
+            str(downloaded_pages_dir)  # Pass the directory, not the JSON file
+        ], "Local File Crawling")
+        
+        if not crawl_success:
+            print("❌ Local file crawling failed. Cannot continue.")
+            return
+    else:
+        print("\n🔄 Skipping local file crawling (--skip-crawl)")
+        crawl_success = True  # Don't fail the pipeline if skipped
     
-    if not crawl_success:
-        print("❌ Local file crawling failed. Cannot continue.")
-        return
-    
-    # Step 5: Crawl Simics source code (if enabled and not skipped)
+    # Step 4: Crawl Simics source code (if enabled and not skipped)
     simics_source_enabled = os.getenv("CRAWL_SIMICS_SOURCE", "false").lower() == "true"
     if args.skip_simics_source:
         print("\n🔄 Skipping Simics source crawling (--skip-simics-source)")
@@ -227,8 +234,12 @@ def main():
             print(f"  📄 Extracted URLs: {extracted_urls_file}")
             print(f"  📁 Downloaded pages: {downloaded_pages_dir}")
             print(f"  📄 Local URLs: {local_urls_file}")
-        print("\n🗄️  Database has been updated with local content")
-        print("🔍 You can now perform RAG queries on the clean, local content")
+        if not args.skip_crawl:
+            print("\n🗄️  Database has been updated with local content")
+            print("🔍 You can now perform RAG queries on the clean, local content")
+        else:
+            print("\n📁 Files are ready for processing")
+            print("🔍 Run without --skip-crawl to process them into the database")
     else:
         print("❌ Pipeline failed at the crawling step")
         print("🔍 Check the logs above for details")
@@ -238,6 +249,7 @@ def main():
     if args.mode == 'site':
         print(f"   Skip extraction: --skip-extraction") 
     print(f"   Skip download: --skip-download")
+    print(f"   Skip crawl: --skip-crawl")
     print(f"   Skip Simics source: --skip-simics-source")
     print(f"\n💡 Usage examples:")
     print(f"   Single page: python scripts/crawl_pipeline.py --mode single https://example.com/page.html")
