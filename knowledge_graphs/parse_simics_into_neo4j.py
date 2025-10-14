@@ -21,6 +21,12 @@ from pathlib import Path
 from typing import Dict, List, Any, Set, Optional
 from dataclasses import asdict
 
+# Load environment variables
+from dotenv import load_dotenv
+# Load .env from project root (one level up from knowledge_graphs/)
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(env_path, override=True)
+
 # Add current directory to path for imports
 sys.path.append(str(Path(__file__).parent))
 
@@ -461,9 +467,99 @@ class SimicsNeo4jExtractor(DirectNeo4jExtractor):
                  line_number=fixture.line_number, dependencies=fixture.dependencies)
     
     async def _create_python_nodes(self, analysis: Dict[str, Any]):
-        """Create Neo4j nodes for regular Python files using existing logic"""
-        # Reuse the existing create_nodes method from the parent class
-        await self.create_nodes(analysis)
+        """Create Neo4j nodes for regular Python files using MERGE logic"""
+        file_path = analysis['file_path']
+        module_name = analysis['module_name']
+        
+        # Create File node using MERGE to handle re-runs
+        await self.driver.execute_query("""
+            MERGE (f:File {path: $path})
+            SET f.name = $name,
+                f.module_name = $module_name,
+                f.line_count = $line_count,
+                f.file_type = 'python'
+        """, 
+            path=file_path,
+            name=file_path.split('/')[-1],
+            module_name=module_name,
+            line_count=analysis.get('line_count', 0)
+        )
+        
+        # Create Class nodes and relationships
+        for cls in analysis['classes']:
+            # Create Class node using MERGE
+            await self.driver.execute_query("""
+                MERGE (c:Class {full_name: $full_name})
+                SET c.name = $name
+            """, name=cls['name'], full_name=cls['full_name'])
+            
+            # Connect File to Class
+            await self.driver.execute_query("""
+                MATCH (f:File {path: $file_path})
+                MATCH (c:Class {full_name: $class_full_name})
+                MERGE (f)-[:DEFINES]->(c)
+            """, file_path=file_path, class_full_name=cls['full_name'])
+            
+            # Create Method nodes
+            for method in cls['methods']:
+                method_id = f"{cls['full_name']}::{method['name']}"
+                method_full_name = f"{cls['full_name']}.{method['name']}"
+                
+                await self.driver.execute_query("""
+                    MERGE (m:Method {method_id: $method_id})
+                    SET m.name = $name,
+                        m.full_name = $full_name,
+                        m.args = $args,
+                        m.return_type = $return_type
+                """, 
+                    name=method['name'],
+                    full_name=method_full_name,
+                    method_id=method_id,
+                    args=method.get('args', []),
+                    return_type=method.get('return_type', 'Any')
+                )
+                
+                # Connect Class to Method
+                await self.driver.execute_query("""
+                    MATCH (c:Class {full_name: $class_full_name})
+                    MATCH (m:Method {method_id: $method_id})
+                    MERGE (c)-[:HAS_METHOD]->(m)
+                """, class_full_name=cls['full_name'], method_id=method_id)
+        
+        # Create Function nodes (top-level)
+        for func in analysis['functions']:
+            func_id = f"{file_path}::{func['name']}"
+            await self.driver.execute_query("""
+                MERGE (f:Function {func_id: $func_id})
+                SET f.name = $name,
+                    f.full_name = $full_name,
+                    f.args = $args,
+                    f.return_type = $return_type
+            """, 
+                name=func['name'],
+                full_name=func['full_name'],
+                func_id=func_id,
+                args=func.get('args', []),
+                return_type=func.get('return_type', 'Any')
+            )
+            
+            # Connect File to Function
+            await self.driver.execute_query("""
+                MATCH (file:File {path: $file_path})
+                MATCH (func:Function {func_id: $func_id})
+                MERGE (file)-[:DEFINES]->(func)
+            """, file_path=file_path, func_id=func_id)
+        
+        # Create Import relationships
+        for import_name in analysis.get('imports', []):
+            await self.driver.execute_query("""
+                MATCH (source:File {path: $source_path})
+                OPTIONAL MATCH (target:File) 
+                WHERE target.module_name = $import_name OR target.module_name STARTS WITH $import_name
+                WITH source, target
+                WHERE target IS NOT NULL
+                MERGE (source)-[:IMPORTS]->(target)
+            """, source_path=file_path, import_name=import_name)
     
     async def _create_simics_relationships(self, analysis_results: Dict[str, List[Dict[str, Any]]]):
         """Create relationships between different Simics elements"""
@@ -552,9 +648,9 @@ Examples:
     parser.add_argument('--python-only', action='store_true', help='Only analyze regular Python files')
     
     # Neo4j connection
-    parser.add_argument('--neo4j-uri', default='bolt://localhost:7687', help='Neo4j URI')
-    parser.add_argument('--neo4j-user', default='neo4j', help='Neo4j username')
-    parser.add_argument('--neo4j-password', help='Neo4j password (or set NEO4J_PASSWORD env var)')
+    parser.add_argument('--neo4j-uri', default=os.getenv('NEO4J_URI', 'bolt://localhost:7687'), help='Neo4j URI')
+    parser.add_argument('--neo4j-user', default=os.getenv('NEO4J_USER', 'neo4j'), help='Neo4j username')
+    parser.add_argument('--neo4j-password', default=os.getenv('NEO4J_PASSWORD'), help='Neo4j password (or set NEO4J_PASSWORD env var)')
     
     # Logging
     parser.add_argument('--log-level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'])
@@ -568,7 +664,7 @@ Examples:
     )
     
     # Get Neo4j password
-    neo4j_password = args.neo4j_password or os.getenv('NEO4J_PASSWORD')
+    neo4j_password = args.neo4j_password
     if not neo4j_password:
         print("Error: Neo4j password must be provided via --neo4j-password or NEO4J_PASSWORD env var")
         sys.exit(1)
