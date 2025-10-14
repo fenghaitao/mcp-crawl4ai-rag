@@ -1036,6 +1036,56 @@ async def perform_rag_query(ctx: Context, query: str, source_type: str = "all", 
     
     Returns:
         JSON string with the search results
+
+    Examples:
+        # Example 1: Search for Python test case examples
+        perform_rag_query(
+            query="How to write Simics Python test cases for device validation?",
+            source_type="python",
+            match_count=3
+        )
+
+        # Example 2: Search both DML and Python source code examples
+        perform_rag_query(
+            query="device initialization and setup code",
+            source_type="source",
+            match_count=8
+        )
+
+        # Example 3: Search documentation only (excluding source code)
+        perform_rag_query(
+            query="Simics device modeling best practices",
+            source_type="docs",
+            match_count=5
+        )
+
+        # Example 4: Search all available sources
+        perform_rag_query(
+            query="register bank implementation patterns",
+            source_type="all",
+            match_count=10
+        )
+
+        # Example 5: Find specific DML syntax examples
+        perform_rag_query(
+            query="DML 1.4 attribute and interface syntax",
+            source_type="dml",
+            match_count=5
+        )
+
+        # Example 6: Search for testing and validation approaches
+        perform_rag_query(
+            query="device register read write test validation",
+            source_type="python",
+            match_count=7
+        )
+
+        # Example 7: Architecture and design documentation
+        perform_rag_query(
+            query="device interface design and memory mapping architecture",
+            source_type="docs",
+            match_count=5
+        )
     """
     try:
         print(f"\n🔍 RAG Query Starting:")
