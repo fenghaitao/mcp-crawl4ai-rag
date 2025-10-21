@@ -125,6 +125,15 @@ async def crawl_local_file(crawler, supabase_client, file_path: str, delete_exis
             logging.info(f"  ✅ Processed successfully")
             logging.info(f"  📄 Markdown content: {len(result.markdown)} characters")
             
+            # Save markdown file alongside HTML file
+            markdown_path = file_path.replace('.html', '.md')
+            try:
+                with open(markdown_path, 'w', encoding='utf-8') as f:
+                    f.write(result.markdown)
+                logging.info(f"  💾 Saved markdown to: {markdown_path}")
+            except Exception as e:
+                logging.warning(f"  ⚠️ Failed to save markdown file: {e}")
+            
             # Extract source_id from original URL
             parsed_url = urlparse(original_url)
             source_id = parsed_url.netloc or parsed_url.path
