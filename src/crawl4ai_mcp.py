@@ -290,10 +290,9 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
 # Initialize FastMCP server
 mcp = FastMCP(
     "mcp-crawl4ai-rag",
-    description="MCP server for RAG and web crawling with Crawl4AI",
     lifespan=crawl4ai_lifespan,
     host=os.getenv("HOST", "0.0.0.0"),
-    port=os.getenv("PORT", "8051")
+    port=int(os.getenv("PORT", "8051"))
 )
 
 def combine_hybrid_results(vector_results: List[Dict[str, Any]], keyword_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
