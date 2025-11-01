@@ -354,6 +354,7 @@ def combine_hybrid_results(vector_results: List[Dict[str, Any]], keyword_results
     combined_results.sort(key=lambda x: x.get('similarity', 0), reverse=True)
     
     print(f"      📊 Hybrid combination: {both_searches_count} both + {vector_only_count} vector + {keyword_only_count} keyword")
+    print(f"         Input: {len(vector_results)} vector + {len(keyword_results)} keyword = {len(combined_results)} total")
     
     return combined_results
 
@@ -401,6 +402,9 @@ def execute_multi_source_search(
             
             keyword_response = keyword_query.execute()
             keyword_results = keyword_response.data if keyword_response.data else []
+            
+            # Add logging for multi-source keyword search
+            print(f"      🔍 Keyword search for source '{source_id}': {len(keyword_results)} results")
             
             # Combine for this source
             source_results = combine_hybrid_results(vector_results, keyword_results)
@@ -1195,6 +1199,13 @@ async def perform_rag_query(ctx: Context, query: str, source_type: str = "all", 
             
             keyword_response = keyword_query.limit(match_count).execute()
             keyword_results = keyword_response.data if keyword_response.data else []
+            
+            # Add detailed logging for keyword search
+            print(f"   🔍 Keyword search executed")
+            print(f"      Query: '{query}'")
+            print(f"      Filter: {filter_metadata}")
+            print(f"      Raw response.data: {keyword_response.data is not None}")
+            print(f"      Keyword results: {len(keyword_results)} found")
             
             # Combine results
             results = combine_hybrid_results(vector_results, keyword_results)
