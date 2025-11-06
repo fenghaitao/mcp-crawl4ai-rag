@@ -1,39 +1,12 @@
 #!/usr/bin/env python3
 """
-Install all project dependencies without sudo permission.
-This script reads dependencies from pyproject.toml and installs them using uv pip,
-then sets up Playwright and other crawl4ai dependencies.
+Post-installation setup for crawl4ai dependencies without sudo permission.
+This script should be run AFTER installing Python packages with 'uv pip install'.
+It handles Playwright browser installation and crawl4ai post-installation setup.
 """
 import subprocess
 import sys
 import os
-
-dependencies = [
-    "crawl4ai==0.6.2",
-    "mcp==1.7.1",
-    "supabase==2.15.1",
-    "openai==1.71.0",
-    "dotenv==0.9.9",
-    "sentence-transformers>=4.1.0",
-    "neo4j>=5.28.1",
-    "httpx>=0.25.0",
-    "aiofiles>=23.0.0",
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-]
-
-def install_packages(packages):
-    """Install packages using uv pip without sudo."""
-    print(f"Installing {len(packages)} packages...")
-    for i, package in enumerate(packages, 1):
-        print(f"\n[{i}/{len(packages)}] Installing {package}...")
-        try:
-            subprocess.check_call(["uv", "pip", "install", package])
-            print(f"✓ Successfully installed {package}")
-        except subprocess.CalledProcessError as e:
-            print(f"✗ Failed to install {package}: {e}")
-            return False
-    return True
 
 def install_playwright():
     """Install Playwright browsers (chromium) without sudo."""
@@ -75,42 +48,34 @@ def run_crawl4ai_setup():
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("Installing project dependencies (without sudo)")
+    print("Post-installation setup for crawl4ai (without sudo)")
+    print("=" * 70)
+    print("Note: This assumes Python packages are already installed via 'uv pip install'")
     print("=" * 70)
     
-    # Step 1: Install Python packages
-    success = install_packages(dependencies)
-    if not success:
-        print("\n" + "=" * 70)
-        print("✗ Python package installation failed")
-        print("=" * 70)
-        sys.exit(1)
-    
-    # Step 2: Install Playwright browsers
-    print("\n" + "=" * 70)
-    print("Step 2: Installing Playwright")
+    # Step 1: Install Playwright browsers
+    print("\nStep 1: Installing Playwright browsers")
     print("=" * 70)
     playwright_success = install_playwright()
     
-    # Step 3: Run crawl4ai setup
+    # Step 2: Run crawl4ai setup
     print("\n" + "=" * 70)
-    print("Step 3: Running crawl4ai setup")
+    print("Step 2: Running crawl4ai setup")
     print("=" * 70)
     crawl4ai_success = run_crawl4ai_setup()
     
     # Final summary
     print("\n" + "=" * 70)
-    print("Installation Summary")
+    print("Post-installation Summary")
     print("=" * 70)
-    print(f"Python packages: {'✓ Success' if success else '✗ Failed'}")
-    print(f"Playwright: {'✓ Success' if playwright_success else '✗ Failed'}")
+    print(f"Playwright browsers: {'✓ Success' if playwright_success else '✗ Failed'}")
     print(f"Crawl4ai setup: {'✓ Success' if crawl4ai_success else '✗ Failed'}")
     
-    if success and playwright_success and crawl4ai_success:
-        print("\n✓ All installations completed successfully!")
+    if playwright_success and crawl4ai_success:
+        print("\n✓ All post-installation steps completed successfully!")
         print("=" * 70)
         sys.exit(0)
     else:
-        print("\n⚠️  Some installations had issues. Check messages above.")
+        print("\n⚠️  Some post-installation steps had issues. Check messages above.")
         print("=" * 70)
         sys.exit(1)
