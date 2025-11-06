@@ -1,0 +1,35 @@
+# Build artifacts
+/build/
+/src/
+node_modules/
+*.so
+*.dylib
+*.dll
+*.o
+*.obj
+*.a
+*.lib
+
+# Generated files
+/parser.c
+/binding.cc
+
+# Package files
+*.log
+*.tgz
+package-lock.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tree-sitter
+/target/
+Cargo.lock

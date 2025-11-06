@@ -1,0 +1,211 @@
+==================
+Device declaration
+==================
+
+device my_device;
+
+---
+
+(source_file
+  (device_declaration
+    (identifier)))
+
+==================
+Bitorder declaration
+==================
+
+device test;
+bitorder be;
+
+---
+
+(source_file
+  (device_declaration
+    (identifier))
+  (bitorder_declaration))
+
+==================
+Simple register
+==================
+
+device test;
+
+bank regs {
+    register status size 4 @ 0x00;
+}
+
+---
+
+(source_file
+  (device_declaration
+    (identifier))
+  (bank_declaration
+    (identifier)
+    (register_declaration
+      (identifier)
+      (size_spec
+        (expression
+          (integer_literal)))
+      (offset_spec
+        (expression
+          (hex_literal))))))
+
+==================
+Register with fields
+==================
+
+device test;
+
+bank regs {
+    register status size 4 @ 0x00 {
+        field ready @ [0];
+        field error @ [1];
+    }
+}
+
+---
+
+(source_file
+  (device_declaration
+    (identifier))
+  (bank_declaration
+    (identifier)
+    (register_declaration
+      (identifier)
+      (size_spec
+        (expression
+          (integer_literal)))
+      (offset_spec
+        (expression
+          (hex_literal)))
+      (field_declaration
+        (identifier)
+        (bitrange_spec
+          (expression
+            (integer_literal))))
+      (field_declaration
+        (identifier)
+        (bitrange_spec
+          (expression
+            (integer_literal)))))))
+
+==================
+Template definition
+==================
+
+template my_register {
+    param size = 4;
+}
+
+---
+
+(source_file
+  (template_definition
+    (identifier)
+    (parameter_declaration
+      (identifier)
+      (expression
+        (integer_literal)))))
+
+==================
+Method declaration
+==================
+
+device test;
+
+method read(uint64 offset, uint32 size) -> (uint64 value) {
+    value = 0;
+}
+
+---
+
+(source_file
+  (device_declaration
+    (identifier))
+  (method_declaration
+    (identifier)
+    (method_params
+      (c_declaration_list
+        (c_declaration
+          (type_identifier
+            (identifier))
+          (declarator
+            (identifier)))
+        (c_declaration
+          (type_identifier
+            (identifier))
+          (declarator
+            (identifier))))
+      (output_params
+        (c_declaration_list
+          (c_declaration
+            (type_identifier
+              (identifier))
+            (declarator
+              (identifier))))))
+    (compound_statement
+      (assignment_statement
+        (expression
+          (identifier))
+        (expression
+          (integer_literal))))))
+
+==================
+Import statement
+==================
+
+import "dml-builtins.dml";
+
+---
+
+(source_file
+  (import_statement
+    (string_literal)))
+
+==================
+Constant declaration
+==================
+
+constant MAX_SIZE = 1024;
+
+---
+
+(source_file
+  (constant_declaration
+    (identifier)
+    (expression
+      (integer_literal))))
+
+==================
+Parameter with default
+==================
+
+param base_address default 0x1000;
+
+---
+
+(source_file
+  (parameter_declaration
+    (identifier)
+    (expression
+      (hex_literal))))
+
+==================
+Conditional compilation
+==================
+
+#if (defined(DEBUG)) {
+    constant debug_enabled = 1;
+}
+
+---
+
+(source_file
+  (conditional_statement
+    (expression
+      (expression
+        (identifier)))
+    (constant_declaration
+      (identifier)
+      (expression
+        (integer_literal)))))

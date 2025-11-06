@@ -1,0 +1,153 @@
+// Simple UART device example for DML 1.4
+device uart;
+bitorder le;
+
+import "dml-builtins.dml";
+
+// Constants
+constant FIFO_SIZE = 16;
+constant BAUD_RATE = 115200;
+
+// Template for registers with logging
+template logged_register {
+    param size = 4;
+    
+    method after_write(uint64 value) {
+        log info: "Register %s written: 0x%x", this.name, value;
+    }
+    
+    method after_read(uint64 value) -> (uint64 result) {
+        log info, 2: "Register %s read: 0x%x", this.name, value;
+        result = value;
+    }
+}
+
+// Main register bank
+bank regs {
+    // Control register
+    register ctrl size 4 @ 0x00 is (logged_register) "Control register" {
+        field enable @ [0] "Enable UART";
+        field mode @ [2:1] "Operating mode: 0=8N1, 1=7E1, 2=7O1";
+        field interrupt_enable @ [3] "Enable interrupts";
+        
+        method after_write(uint64 value) {
+            if (this.enable == 1) {
+                log info: "UART enabled in mode %d", this.mode;
+                if (this.interrupt_enable == 1) {
+                    log info: "Interrupts enabled";
+                }
+            } else {
+                log info: "UART disabled";
+            }
+        }
+    }
+    
+    // Status register
+    register status size 4 @ 0x04 is (logged_register) "Status register" {
+        field tx_ready @ [0] "Transmitter ready";
+        field rx_ready @ [1] "Receiver ready";
+        field error @ [2] "Error flag";
+        field busy @ [3] "Busy flag";
+    }
+    
+    // Data register
+    register data size 4 @ 0x08 is (logged_register) "Data register" {
+        method write(uint64 value) {
+            local uint8 byte = cast(value & 0xFF, uint8);
+            call transmit_byte(byte);
+        }
+        
+        method read() -> (uint64 value) {
+            if (rx_fifo_count > 0) {
+                value = cast(rx_fifo[rx_fifo_head], uint64);
+                rx_fifo_head = (rx_fifo_head + 1) % FIFO_SIZE;
+                rx_fifo_count = rx_fifo_count - 1;
+            } else {
+                value = 0;
+            }
+        }
+    }
+    
+    // Baud rate register
+    register baud size 4 @ 0x0C is (logged_register) "Baud rate divisor";
+}
+
+// Device state
+saved uint8 rx_fifo[FIFO_SIZE];
+saved uint32 rx_fifo_head = 0;
+saved uint32 rx_fifo_tail = 0;
+saved uint32 rx_fifo_count = 0;
+
+session uint64 bytes_transmitted = 0;
+session uint64 bytes_received = 0;
+
+// Methods
+method init() {
+    log info: "UART device initialized";
+    regs.ctrl.enable = 0;
+    regs.status.tx_ready = 1;
+    regs.status.rx_ready = 0;
+    regs.baud.val = BAUD_RATE;
+}
+
+method transmit_byte(uint8 byte) {
+    log info, 2: "Transmitting byte: 0x%02x ('%c')", byte, byte;
+    
+    // Simulate transmission delay
+    regs.status.tx_ready = 0;
+    regs.status.busy = 1;
+    
+    after 1.0e-6 tx_complete: {
+        regs.status.tx_ready = 1;
+        regs.status.busy = 0;
+        bytes_transmitted = bytes_transmitted + 1;
+        
+        if (regs.ctrl.interrupt_enable == 1) {
+            // Trigger interrupt
+            log info: "TX interrupt triggered";
+        }
+    };
+}
+
+method receive_byte(uint8 byte) {
+    if (rx_fifo_count < FIFO_SIZE) {
+        rx_fifo[rx_fifo_tail] = byte;
+        rx_fifo_tail = (rx_fifo_tail + 1) % FIFO_SIZE;
+        rx_fifo_count = rx_fifo_count + 1;
+        
+        regs.status.rx_ready = 1;
+        bytes_received = bytes_received + 1;
+        
+        log info, 2: "Received byte: 0x%02x ('%c')", byte, byte;
+        
+        if (regs.ctrl.interrupt_enable == 1) {
+            log info: "RX interrupt triggered";
+        }
+    } else {
+        log error: "RX FIFO overflow";
+        regs.status.error = 1;
+    }
+}
+
+method reset() {
+    log info: "UART reset";
+    
+    // Reset registers
+    regs.ctrl.val = 0;
+    regs.status.val = 0x01;  // tx_ready = 1
+    regs.data.val = 0;
+    
+    // Clear FIFO
+    rx_fifo_head = 0;
+    rx_fifo_tail = 0;
+    rx_fifo_count = 0;
+    
+    // Reset statistics
+    bytes_transmitted = 0;
+    bytes_received = 0;
+}
+
+method get_statistics() -> (uint64 tx_count, uint64 rx_count) {
+    tx_count = bytes_transmitted;
+    rx_count = bytes_received;
+}
