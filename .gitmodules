@@ -1,3 +1,9 @@
 [submodule "simics-7-packages-2025-38-linux64"]
 	path = simics-7-packages-2025-38-linux64
 	url = https://github.com/fenghaitao/simics-7-packages-2025-38-linux64
+[submodule "astchunk"]
+	path = astchunk
+	url = https://github.com/wangli-ustc/astchunk.git
+[submodule "tree-sitter"]
+	path = tree-sitter
+	url = https://github.com/wangli-ustc/tree-sitter.git
