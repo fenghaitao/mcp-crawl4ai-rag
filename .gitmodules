@@ -4,6 +4,3 @@
 [submodule "astchunk"]
 	path = astchunk
 	url = https://github.com/wangli-ustc/astchunk.git
-[submodule "tree-sitter"]
-	path = tree-sitter
-	url = https://github.com/wangli-ustc/tree-sitter.git
