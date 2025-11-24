@@ -223,9 +223,9 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
         from utils import extract_code_blocks, generate_code_example_summary, add_code_examples_to_supabase
         from utils import update_source_info, extract_source_summary
         
-        # Import smart_chunk_markdown from crawl4ai_mcp
+        # Import smart_chunk_source from crawl4ai_mcp
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-        from crawl4ai_mcp import smart_chunk_markdown
+        from crawl4ai_mcp import smart_chunk_source
         from urllib.parse import urlparse
         from concurrent.futures import ThreadPoolExecutor
         
@@ -274,24 +274,38 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
                 # Create GitHub URL for the source file
                 file_url = get_github_url_for_file(file_path, simics_base_path)
                 
-                # Chunk the content
-                chunks = smart_chunk_markdown(content)
-                logging.info(f"  📦 [{file_batch_count}/{len(files)}] {Path(file_path).name}: {len(chunks)} chunks")
+                # Determine source type from file extension
+                source_type = metadata['language']
+                
+                # Chunk the content using AST-aware chunking
+                chunk_dicts = smart_chunk_source(
+                    code=content,
+                    source_type=source_type,
+                    max_chunk_size=2000,  # Smaller chunks for source code
+                    chunk_overlap=20,  # Small overlap for context
+                    file_path=file_path
+                )
+                logging.info(f"  📦 [{file_batch_count}/{len(files)}] {Path(file_path).name}: {len(chunk_dicts)} {source_type.upper()} chunks")
                 
                 # Add chunks for document storage
-                for i, chunk in enumerate(chunks):
+                for i, chunk_dict in enumerate(chunk_dicts):
                     urls.append(file_url)
                     chunk_numbers.append(i)
-                    contents.append(chunk)
+                    contents.append(chunk_dict["content"])
                     
-                    # Enhance metadata with chunk info
+                    # Enhance metadata with chunk info and AST metadata
                     chunk_metadata = metadata.copy()
                     chunk_metadata.update({
                         "chunk_index": i,
                         "url": file_url,
                         "source_id": source_id,
-                        "crawl_time": "simics_source_crawl"
+                        "crawl_time": "simics_source_crawl",
+                        "source_type": source_type,
+                        "chunking_method": "ast_aware"
                     })
+                    # Merge AST metadata if available
+                    if chunk_dict.get("metadata"):
+                        chunk_metadata.update(chunk_dict["metadata"])
                     metadatas.append(chunk_metadata)
                 
                 # Store full document mapping

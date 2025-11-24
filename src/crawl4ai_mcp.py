@@ -30,6 +30,10 @@ from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 knowledge_graphs_path = Path(__file__).resolve().parent.parent / 'knowledge_graphs'
 sys.path.append(str(knowledge_graphs_path))
 
+# Add astchunk to path for source code chunking
+astchunk_path = Path(__file__).resolve().parent.parent / 'astchunk' / 'src'
+sys.path.append(str(astchunk_path))
+
 from utils import (
     get_supabase_client, 
     add_documents_to_supabase, 
@@ -551,6 +555,75 @@ def smart_chunk_markdown(text: str, chunk_size: int = 5000) -> List[str]:
         start = end
 
     return chunks
+
+def smart_chunk_source(
+    code: str, 
+    source_type: str = "python", 
+    max_chunk_size: int = 512,
+    chunk_overlap: int = 0,
+    chunk_expansion: bool = False,
+    file_path: str = None
+) -> List[Dict[str, Any]]:
+    """
+    Chunk source code using AST-aware chunking with astchunk.
+    
+    This function uses the astchunk library to intelligently chunk source code
+    while preserving syntactic structure (functions, classes, methods, etc.).
+    
+    Args:
+        code: Source code to chunk
+        source_type: Programming language type ("python" or "dml")
+        max_chunk_size: Maximum non-whitespace characters per chunk (default: 512)
+        chunk_overlap: Number of AST nodes to overlap between chunks (default: 0)
+        chunk_expansion: Whether to add metadata headers to chunks (default: False)
+        file_path: Optional file path for metadata
+        
+    Returns:
+        List of dictionaries with 'content' and 'metadata' keys
+        
+    Example:
+        >>> chunks = smart_chunk_source(python_code, source_type="python", max_chunk_size=512)
+        >>> for chunk in chunks:
+        ...     print(f"Chunk: {len(chunk['content'])} chars")
+        ...     print(f"Lines: {chunk['metadata']['start_line']}-{chunk['metadata']['end_line']}")
+    """
+    try:
+        from astchunk import ASTChunkBuilder
+        
+        # Validate source type
+        supported_types = ["python", "dml"]
+        if source_type not in supported_types:
+            print(f"⚠️  Unsupported source type '{source_type}', falling back to markdown chunking")
+            return [{"content": chunk, "metadata": {}} for chunk in smart_chunk_markdown(code, chunk_size=max_chunk_size)]
+        
+        # Initialize AST chunk builder
+        builder = ASTChunkBuilder(
+            max_chunk_size=max_chunk_size,
+            language=source_type,
+            metadata_template="default"
+        )
+        
+        # Prepare metadata
+        repo_level_metadata = {}
+        if file_path:
+            repo_level_metadata["file_path"] = file_path
+        
+        # Generate chunks
+        chunks = builder.chunkify(
+            code=code,
+            chunk_overlap=chunk_overlap,
+            chunk_expansion=chunk_expansion,
+            repo_level_metadata=repo_level_metadata
+        )
+        
+        return chunks
+        
+    except ImportError as e:
+        print(f"⚠️  astchunk not available ({e}), falling back to markdown chunking")
+        return [{"content": chunk, "metadata": {}} for chunk in smart_chunk_markdown(code, chunk_size=max_chunk_size)]
+    except Exception as e:
+        print(f"⚠️  Error in AST chunking ({e}), falling back to markdown chunking")
+        return [{"content": chunk, "metadata": {}} for chunk in smart_chunk_markdown(code, chunk_size=max_chunk_size)]
 
 def extract_section_info(chunk: str) -> Dict[str, Any]:
     """
