@@ -7,3 +7,6 @@
 [submodule "tree-sitter-dml"]
 	path = tree-sitter-dml
 	url = https://github.com/wangli-ustc/tree-sitter-dml.git
+[submodule "unstructured"]
+	path = unstructured
+	url = https://github.com/wangli-ustc/unstructured.git

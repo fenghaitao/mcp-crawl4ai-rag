@@ -220,14 +220,12 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
     """Add processed source files to Supabase."""
     try:
         from utils import get_supabase_client, add_documents_to_supabase
-        from utils import extract_code_blocks, generate_code_example_summary, add_code_examples_to_supabase
         from utils import update_source_info, extract_source_summary
         
         # Import smart_chunk_source from crawl4ai_mcp
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
         from crawl4ai_mcp import smart_chunk_source
         from urllib.parse import urlparse
-        from concurrent.futures import ThreadPoolExecutor
         
         client = get_supabase_client()
         agentic_rag_enabled = os.getenv("USE_AGENTIC_RAG", "false").lower() == "true"
@@ -257,12 +255,8 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
             metadatas = []
             url_to_full_document = {}
             
-            # Prepare code example data
-            all_code_urls = []
-            all_code_chunk_numbers = []
-            all_code_examples = []
-            all_code_summaries = []
-            all_code_metadatas = []
+            # Note: Code example extraction is skipped for source code files
+            # The AST-aware chunks already provide well-structured code segments
             
             file_batch_count = 0
             for file_data in files:
@@ -312,45 +306,14 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
                 url_to_full_document[file_url] = content
                 
                 # Extract code examples if enabled
+                # Note: For source code files (.dml, .py), we skip markdown-style code block extraction
+                # since the entire file is already code. The AST chunks provide well-structured code segments.
+                # Code example extraction is designed for markdown documentation files.
                 if agentic_rag_enabled:
-                    try:
-                        code_blocks = extract_code_blocks(content)
-                        if code_blocks:
-                            logging.info(f"    🔬 Found {len(code_blocks)} code blocks")
-                            
-                            # Generate summaries for code examples
-                            def process_code_example(args):
-                                code, context_before, context_after = args
-                                return generate_code_example_summary(code, context_before, context_after)
-                            
-                            summary_args = [
-                                (block['code'], block['context_before'], block['context_after'])
-                                for block in code_blocks
-                            ]
-                            
-                            with ThreadPoolExecutor(max_workers=3) as executor:
-                                summaries = list(executor.map(process_code_example, summary_args))
-                            
-                            # Add to code examples batch
-                            for i, (block, summary) in enumerate(zip(code_blocks, summaries)):
-                                all_code_urls.append(file_url)
-                                all_code_chunk_numbers.append(i)
-                                all_code_examples.append(block['code'])
-                                all_code_summaries.append(summary)
-                                
-                                # Create metadata for code example
-                                code_meta = metadata.copy()
-                                code_meta.update({
-                                    "chunk_index": i,
-                                    "url": file_url,
-                                    "source_id": source_id,
-                                    "code_length": len(block['code']),
-                                    "block_type": block.get('type', 'unknown')
-                                })
-                                all_code_metadatas.append(code_meta)
-                        
-                    except Exception as e:
-                        logging.warning(f"    ⚠️  Error extracting code examples: {e}")
+                    # Skip code example extraction for source code files
+                    # The AST-aware chunks already provide meaningful code segments
+                    logging.debug(f"    ℹ️  Skipping code example extraction for source file (using AST chunks instead)")
+                    pass
             
             if urls:
                 # Update source information first
@@ -362,18 +325,8 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
                 logging.info(f"  💾 Storing {len(contents)} document chunks...")
                 add_documents_to_supabase(client, urls, chunk_numbers, contents, metadatas, url_to_full_document, delete_existing)
                 
-                # Add code examples if any
-                if agentic_rag_enabled and all_code_examples:
-                    logging.info(f"  🔬 Storing {len(all_code_examples)} code examples...")
-                    add_code_examples_to_supabase(
-                        client,
-                        all_code_urls,
-                        all_code_chunk_numbers,
-                        all_code_examples,
-                        all_code_summaries,
-                        all_code_metadatas,
-                        delete_existing
-                    )
+                # Note: Code examples are not extracted from source code files
+                # The AST chunks already provide well-structured, searchable code segments
         
         logging.info(f"\n✅ Successfully added all source files to Supabase!")
         
