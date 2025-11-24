@@ -226,12 +226,18 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
         from crawl4ai_mcp import smart_chunk_source
         from urllib.parse import urlparse
+        from concurrent.futures import ThreadPoolExecutor
+        
+        # Import summarization functions
+        from code_summarizer import generate_file_summary, generate_chunk_summary
         
         client = get_supabase_client()
         agentic_rag_enabled = os.getenv("USE_AGENTIC_RAG", "false").lower() == "true"
+        use_summarization = os.getenv("USE_CODE_SUMMARIZATION", "true").lower() == "true"
         
         logging.info(f"\n💾 Adding {len(processed_files)} source files to Supabase...")
         logging.info(f"🔬 Agentic RAG (code examples): {'Enabled' if agentic_rag_enabled else 'Disabled'}")
+        logging.info(f"📝 Code Summarization: {'Enabled' if use_summarization else 'Disabled'}")
         
         # Group files by source_id for batch processing
         files_by_source = {}
@@ -271,6 +277,17 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
                 # Determine source type from file extension
                 source_type = metadata['language']
                 
+                # Generate file-level summary if enabled
+                file_summary = None
+                if use_summarization:
+                    try:
+                        logging.info(f"  📝 [{file_batch_count}/{len(files)}] Generating file summary for {Path(file_path).name}...")
+                        file_summary = generate_file_summary(content, metadata)
+                        logging.info(f"     ✓ Summary: {file_summary[:100]}...")
+                    except Exception as e:
+                        logging.warning(f"     ⚠️  Failed to generate file summary: {e}")
+                        file_summary = None
+                
                 # Chunk the content using AST-aware chunking
                 chunk_dicts = smart_chunk_source(
                     code=content,
@@ -281,13 +298,52 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
                 )
                 logging.info(f"  📦 [{file_batch_count}/{len(files)}] {Path(file_path).name}: {len(chunk_dicts)} {source_type.upper()} chunks")
                 
+                # Generate chunk-level summaries if enabled (batch processing)
+                chunk_summaries = []
+                if use_summarization and file_summary:
+                    try:
+                        logging.info(f"     📝 Generating {len(chunk_dicts)} chunk summaries...")
+                        
+                        # Prepare arguments for parallel processing
+                        summary_args = []
+                        for i, chunk_dict in enumerate(chunk_dicts):
+                            chunk_meta = metadata.copy()
+                            chunk_meta['chunk_type'] = chunk_dict.get("metadata", {}).get("chunk_type", "unknown")
+                            summary_args.append((chunk_dict["content"], file_summary, chunk_meta))
+                        
+                        # Process in parallel with ThreadPoolExecutor
+                        with ThreadPoolExecutor(max_workers=3) as executor:
+                            chunk_summaries = list(executor.map(
+                                lambda args: generate_chunk_summary(*args),
+                                summary_args
+                            ))
+                        
+                        logging.info(f"     ✓ Generated {len(chunk_summaries)} chunk summaries")
+                    except Exception as e:
+                        logging.warning(f"     ⚠️  Failed to generate chunk summaries: {e}")
+                        chunk_summaries = [None] * len(chunk_dicts)
+                else:
+                    chunk_summaries = [None] * len(chunk_dicts)
+                
                 # Add chunks for document storage
                 for i, chunk_dict in enumerate(chunk_dicts):
                     urls.append(file_url)
                     chunk_numbers.append(i)
-                    contents.append(chunk_dict["content"])
                     
-                    # Enhance metadata with chunk info and AST metadata
+                    # Prepare content for embedding
+                    chunk_content = chunk_dict["content"]
+                    
+                    # If summarization is enabled, prepend summaries to content for better embeddings
+                    if use_summarization and file_summary:
+                        embedding_content = f"File: {file_summary}\n\n"
+                        if chunk_summaries[i]:
+                            embedding_content += f"Chunk: {chunk_summaries[i]}\n\n"
+                        embedding_content += chunk_content
+                        contents.append(embedding_content)
+                    else:
+                        contents.append(chunk_content)
+                    
+                    # Enhance metadata with chunk info, AST metadata, and summaries
                     chunk_metadata = metadata.copy()
                     chunk_metadata.update({
                         "chunk_index": i,
@@ -295,11 +351,20 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
                         "source_id": source_id,
                         "crawl_time": "simics_source_crawl",
                         "source_type": source_type,
-                        "chunking_method": "ast_aware"
+                        "chunking_method": "ast_aware",
+                        "has_summarization": use_summarization
                     })
+                    
+                    # Add summaries to metadata
+                    if use_summarization and file_summary:
+                        chunk_metadata["file_summary"] = file_summary
+                        if chunk_summaries[i]:
+                            chunk_metadata["chunk_summary"] = chunk_summaries[i]
+                    
                     # Merge AST metadata if available
                     if chunk_dict.get("metadata"):
                         chunk_metadata.update(chunk_dict["metadata"])
+                    
                     metadatas.append(chunk_metadata)
                 
                 # Store full document mapping
