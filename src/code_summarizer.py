@@ -4,7 +4,7 @@ Provides file-level and chunk-level summarization with domain-specific prompts.
 """
 import os
 from typing import Dict, Any, Optional
-from dashscope_client import create_chat_completion_dashscope
+from iflow_client import create_chat_completion_iflow
 
 
 # Simics-specific terminology and concepts
@@ -27,7 +27,7 @@ Key concepts:
 def generate_file_summary(
     content: str,
     metadata: Dict[str, Any],
-    model: str = "qwen-coder-plus",
+    model: str = "iflow/qwen3-coder-plus",
     max_tokens: int = 200
 ) -> str:
     """
@@ -113,7 +113,7 @@ Provide a concise 2-3 sentence summary of what this file implements.
 Summary:"""
     
     try:
-        response = create_chat_completion_dashscope(
+        response = create_chat_completion_iflow(
             messages=[{"role": "user", "content": prompt}],
             model=model,
             temperature=0.3,
@@ -142,7 +142,7 @@ def generate_chunk_summary(
     chunk_code: str,
     file_summary: str,
     metadata: Dict[str, Any],
-    model: str = "qwen-coder-plus",
+    model: str = "iflow/qwen3-coder-plus",
     max_tokens: int = 150
 ) -> str:
     """
@@ -229,7 +229,7 @@ Provide a concise 1-2 sentence summary of what this specific code chunk does.
 Summary:"""
     
     try:
-        response = create_chat_completion_dashscope(
+        response = create_chat_completion_iflow(
             messages=[{"role": "user", "content": prompt}],
             model=model,
             temperature=0.3,

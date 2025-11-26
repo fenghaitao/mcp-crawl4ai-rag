@@ -6,13 +6,13 @@
 ✅ **File-level summaries** (high-level understanding)
 ✅ **Chunk-level summaries** (specific details)
 ✅ **Simics-specific prompts** (DML domain expertise)
-✅ **DashScope/Qwen3-coder-plus** integration
+✅ **iFlow/Qwen3-coder-plus** integration
 
 ## Setup (3 steps)
 
-### 1. Get DashScope API Key
+### 1. Get iFlow API Key
 
-Visit: https://dashscope.console.aliyun.com/
+Visit: https://api.iflow.cn/ (or your iFlow provider)
 - Sign up/login
 - Create API key
 - Copy the key
@@ -21,7 +21,8 @@ Visit: https://dashscope.console.aliyun.com/
 
 ```bash
 # Add to .env file
-DASHSCOPE_API_KEY=your_api_key_here
+IFLOW_API_KEY=your_api_key_here
+IFLOW_BASE_URL=https://api.iflow.cn/v1
 USE_CODE_SUMMARIZATION=true
 ```
 
@@ -77,15 +78,15 @@ For each source file:
 ## Cost
 
 For 1000 files (5000 chunks):
-- Very minimal cost with DashScope
+- Very minimal cost with iFlow
 - One-time processing
 - Huge quality improvement
 
 ## Files Created
 
-1. `src/dashscope_client.py` - DashScope API client
+1. `src/iflow_client.py` - iFlow API client
 2. `src/code_summarizer.py` - Summarization logic
-3. `test_code_summarization.py` - Test script
+3. `test_iflow_summarization.py` - Test script
 4. Updated `scripts/crawl_simics_source.py` - Integration
 5. Updated `.env` - Configuration
 
@@ -96,7 +97,7 @@ For 1000 files (5000 chunks):
 
 ## Next Steps
 
-1. ✅ Test: `python test_code_summarization.py`
+1. ✅ Test: `python test_iflow_summarization.py`
 2. ✅ Crawl: `python scripts/crawl_simics_source.py`
 3. ✅ Search: Try queries and see improved results!
 
