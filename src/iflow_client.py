@@ -127,9 +127,9 @@ def create_chat_completion_iflow(
         Exception: If API call fails
     """
     # Get API key
-    api_key = os.getenv("IFLOW_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+    api_key = os.getenv("IFLOW_API_KEY")
     if not api_key:
-        raise ValueError("IFLOW_API_KEY or DASHSCOPE_API_KEY environment variable must be set")
+        raise ValueError("IFLOW_API_KEY environment variable must be set")
     api_base = os.getenv("IFLOW_API_BASE", "https://apis.iflow.cn/v1/")
     
     # Convert iflow/ prefix to dashscope/ for LiteLLM

@@ -287,7 +287,7 @@ class CopilotClient:
                     await asyncio.sleep(0.1)
                     
             except Exception as e:
-                print(f"Error creating embeddings for batch {i//batch_size + 1}: {e}")
+                raise RuntimeError(f"Error creating embeddings for batch {i//batch_size + 1}: {e}")
                 # Add zero embeddings as fallback
                 for _ in batch:
                     all_embeddings.append([0.0] * 1536)  # text-embedding-3-small dimension

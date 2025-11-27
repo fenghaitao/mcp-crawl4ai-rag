@@ -217,123 +217,126 @@ def process_source_file(file_path: str, file_index: int = 0, total_files: int = 
         return None
 
 async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], simics_base_path: str, delete_existing: bool = True):
-    """Add processed source files to Supabase."""
+    """
+    Add processed source files to Supabase.
+    
+    NEW: Per-file processing workflow:
+    1. For each file: Generate file summary
+    2. Chunk the file using AST-aware chunking
+    3. Generate chunk summaries
+    4. Create embeddings for all chunks
+    5. Upload to Supabase immediately
+    
+    This approach provides:
+    - Incremental progress (each file is fully processed before moving to next)
+    - Lower memory usage (no accumulation of all chunks)
+    - Better error recovery (partial progress is saved)
+    """
     try:
         from utils import get_supabase_client, add_documents_to_supabase
-        from utils import update_source_info, extract_source_summary
+        from utils import update_source_info
         
         # Import smart_chunk_source from crawl4ai_mcp
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
         from crawl4ai_mcp import smart_chunk_source
-        from urllib.parse import urlparse
-        from concurrent.futures import ThreadPoolExecutor
         
         # Import summarization functions
         from code_summarizer import generate_file_summary, generate_chunk_summary
         
         client = get_supabase_client()
-        agentic_rag_enabled = os.getenv("USE_AGENTIC_RAG", "false").lower() == "true"
         use_summarization = os.getenv("USE_CODE_SUMMARIZATION", "true").lower() == "true"
         
-        logging.info(f"\n💾 Adding {len(processed_files)} source files to Supabase...")
-        logging.info(f"🔬 Agentic RAG (code examples): {'Enabled' if agentic_rag_enabled else 'Disabled'}")
+        logging.info(f"\n💾 Processing {len(processed_files)} source files (per-file workflow)...")
         logging.info(f"📝 Code Summarization: {'Enabled' if use_summarization else 'Disabled'}")
+        logging.info(f"🔄 Workflow: File Summary → Chunk → Chunk Summaries → Embed → Upload")
         
-        # Group files by source_id for batch processing
-        files_by_source = {}
-        for file_data in processed_files:
+        # Track statistics
+        total_files = len(processed_files)
+        successful_files = 0
+        failed_files = 0
+        total_chunks = 0
+        
+        # Track source info for final update
+        source_stats = {}  # source_id -> {files: set(), chars: int}
+        
+        # Process each file individually
+        for file_index, file_data in enumerate(processed_files, 1):
+            file_path = file_data['file_path']
+            content = file_data['content']
+            metadata = file_data['metadata']
             source_id = file_data['source_id']
-            if source_id not in files_by_source:
-                files_by_source[source_id] = []
-            files_by_source[source_id].append(file_data)
-        
-        # Process each source type
-        source_count = 0
-        total_sources = len(files_by_source)
-        for source_id, files in files_by_source.items():
-            source_count += 1
-            logging.info(f"\n📁 [{source_count}/{total_sources}] Processing {len(files)} files for source: {source_id}")
+            source_type = metadata['language']
             
-            # Prepare data for batch insertion
-            urls = []
-            chunk_numbers = []
-            contents = []
-            metadatas = []
-            url_to_full_document = {}
+            # Initialize source stats
+            if source_id not in source_stats:
+                source_stats[source_id] = {'files': set(), 'chars': 0}
             
-            # Note: Code example extraction is skipped for source code files
-            # The AST-aware chunks already provide well-structured code segments
-            
-            file_batch_count = 0
-            for file_data in files:
-                file_batch_count += 1
-                file_path = file_data['file_path']
-                content = file_data['content']
-                metadata = file_data['metadata']
+            try:
+                logging.info(f"\n{'='*60}")
+                logging.info(f"📄 [{file_index}/{total_files}] {Path(file_path).name}")
+                logging.info(f"   Source: {source_id} | Type: {source_type.upper()} | Size: {len(content)} chars")
                 
                 # Create GitHub URL for the source file
                 file_url = get_github_url_for_file(file_path, simics_base_path)
                 
-                # Determine source type from file extension
-                source_type = metadata['language']
-                
-                # Generate file-level summary if enabled
+                # ========== STEP 1: Generate File Summary ==========
                 file_summary = None
                 if use_summarization:
                     try:
-                        logging.info(f"  📝 [{file_batch_count}/{len(files)}] Generating file summary for {Path(file_path).name}...")
+                        logging.info(f"   📝 Step 1: Generating file summary...")
                         file_summary = generate_file_summary(content, metadata)
-                        logging.info(f"     ✓ Summary: {file_summary[:100]}...")
+                        logging.info(f"      ✓ Summary: {file_summary[:80]}...")
                     except Exception as e:
-                        logging.warning(f"     ⚠️  Failed to generate file summary: {e}")
+                        logging.warning(f"      ⚠️ Failed to generate file summary: {e}")
                         file_summary = None
+                else:
+                    logging.info(f"   📝 Step 1: Skipped (summarization disabled)")
                 
-                # Chunk the content using AST-aware chunking
+                # ========== STEP 2: Chunk the File ==========
+                logging.info(f"   📦 Step 2: Chunking file...")
                 chunk_dicts = smart_chunk_source(
                     code=content,
                     source_type=source_type,
-                    max_chunk_size=2000,  # Smaller chunks for source code
-                    chunk_overlap=20,  # Small overlap for context
+                    max_chunk_size=2000,
+                    chunk_overlap=20,
                     file_path=file_path
                 )
-                logging.info(f"  📦 [{file_batch_count}/{len(files)}] {Path(file_path).name}: {len(chunk_dicts)} {source_type.upper()} chunks")
+                num_chunks = len(chunk_dicts)
+                logging.info(f"      ✓ Created {num_chunks} chunks")
                 
-                # Generate chunk-level summaries if enabled (batch processing)
-                chunk_summaries = []
-                if use_summarization and file_summary:
+                # ========== STEP 3: Generate Chunk Summaries ==========
+                chunk_summaries = [None] * num_chunks
+                if use_summarization and file_summary and num_chunks > 0:
                     try:
-                        logging.info(f"     📝 Generating {len(chunk_dicts)} chunk summaries...")
-                        
-                        # Prepare arguments for parallel processing
-                        summary_args = []
+                        logging.info(f"   📝 Step 3: Generating {num_chunks} chunk summaries...")
                         for i, chunk_dict in enumerate(chunk_dicts):
                             chunk_meta = metadata.copy()
                             chunk_meta['chunk_type'] = chunk_dict.get("metadata", {}).get("chunk_type", "unknown")
-                            summary_args.append((chunk_dict["content"], file_summary, chunk_meta))
-                        
-                        # Process in parallel with ThreadPoolExecutor
-                        with ThreadPoolExecutor(max_workers=3) as executor:
-                            chunk_summaries = list(executor.map(
-                                lambda args: generate_chunk_summary(*args),
-                                summary_args
-                            ))
-                        
-                        logging.info(f"     ✓ Generated {len(chunk_summaries)} chunk summaries")
+                            chunk_summaries[i] = generate_chunk_summary(
+                                chunk_dict["content"], 
+                                file_summary, 
+                                chunk_meta
+                            )
+                        logging.info(f"      ✓ Generated {num_chunks} chunk summaries")
                     except Exception as e:
-                        logging.warning(f"     ⚠️  Failed to generate chunk summaries: {e}")
-                        chunk_summaries = [None] * len(chunk_dicts)
+                        logging.warning(f"      ⚠️ Failed to generate chunk summaries: {e}")
+                        chunk_summaries = [None] * num_chunks
                 else:
-                    chunk_summaries = [None] * len(chunk_dicts)
+                    logging.info(f"   📝 Step 3: Skipped (no file summary or no chunks)")
                 
-                # Add chunks for document storage
+                # ========== STEP 4: Prepare Data for Embedding ==========
+                logging.info(f"   🔢 Step 4: Preparing data for embedding...")
+                urls = []
+                chunk_numbers = []
+                contents = []
+                metadatas = []
+                
                 for i, chunk_dict in enumerate(chunk_dicts):
                     urls.append(file_url)
                     chunk_numbers.append(i)
                     
-                    # Prepare content for embedding
+                    # Prepare content for embedding (with summaries if available)
                     chunk_content = chunk_dict["content"]
-                    
-                    # If summarization is enabled, prepend summaries to content for better embeddings
                     if use_summarization and file_summary:
                         embedding_content = f"File: {file_summary}\n\n"
                         if chunk_summaries[i]:
@@ -343,7 +346,7 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
                     else:
                         contents.append(chunk_content)
                     
-                    # Enhance metadata with chunk info, AST metadata, and summaries
+                    # Prepare metadata
                     chunk_metadata = metadata.copy()
                     chunk_metadata.update({
                         "chunk_index": i,
@@ -355,45 +358,70 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
                         "has_summarization": use_summarization
                     })
                     
-                    # Add summaries to metadata
                     if use_summarization and file_summary:
                         chunk_metadata["file_summary"] = file_summary
                         if chunk_summaries[i]:
                             chunk_metadata["chunk_summary"] = chunk_summaries[i]
                     
-                    # Merge AST metadata if available
                     if chunk_dict.get("metadata"):
                         chunk_metadata.update(chunk_dict["metadata"])
                     
                     metadatas.append(chunk_metadata)
                 
-                # Store full document mapping
-                url_to_full_document[file_url] = content
+                logging.info(f"      ✓ Prepared {len(contents)} chunks for embedding")
                 
-                # Extract code examples if enabled
-                # Note: For source code files (.dml, .py), we skip markdown-style code block extraction
-                # since the entire file is already code. The AST chunks provide well-structured code segments.
-                # Code example extraction is designed for markdown documentation files.
-                if agentic_rag_enabled:
-                    # Skip code example extraction for source code files
-                    # The AST-aware chunks already provide meaningful code segments
-                    logging.debug(f"    ℹ️  Skipping code example extraction for source file (using AST chunks instead)")
-                    pass
-            
-            if urls:
-                # Update source information first
-                source_summary = f"{source_id} source code containing {len(set(urls))} files"
-                total_chars = sum(len(content) for content in contents)
-                update_source_info(client, source_id, source_summary, total_chars // 4)  # Rough word estimate
+                # ========== STEP 5: Create Embeddings & Upload ==========
+                if contents:
+                    logging.info(f"   💾 Step 5: Creating embeddings & uploading to Supabase...")
+                    url_to_full_document = {file_url: content}
+                    
+                    # This function creates embeddings and uploads in batches
+                    add_documents_to_supabase(
+                        client, 
+                        urls, 
+                        chunk_numbers, 
+                        contents, 
+                        metadatas, 
+                        url_to_full_document, 
+                        delete_existing=delete_existing
+                    )
+                    
+                    logging.info(f"      ✓ Uploaded {len(contents)} chunks to Supabase")
+                    
+                    # Update statistics
+                    successful_files += 1
+                    total_chunks += num_chunks
+                    source_stats[source_id]['files'].add(file_url)
+                    source_stats[source_id]['chars'] += len(content)
+                else:
+                    logging.warning(f"   ⚠️ No chunks to upload for this file")
+                    failed_files += 1
                 
-                # Add documents to Supabase
-                logging.info(f"  💾 Storing {len(contents)} document chunks...")
-                add_documents_to_supabase(client, urls, chunk_numbers, contents, metadatas, url_to_full_document, delete_existing)
+                logging.info(f"   ✅ File completed successfully!")
                 
-                # Note: Code examples are not extracted from source code files
-                # The AST chunks already provide well-structured, searchable code segments
+            except Exception as e:
+                logging.error(f"   ❌ Error processing file: {e}")
+                failed_files += 1
+                continue
         
-        logging.info(f"\n✅ Successfully added all source files to Supabase!")
+        # ========== Update Source Info ==========
+        logging.info(f"\n{'='*60}")
+        logging.info(f"📊 Updating source information...")
+        for source_id, stats in source_stats.items():
+            if stats['files']:
+                source_summary = f"{source_id} source code containing {len(stats['files'])} files"
+                word_estimate = stats['chars'] // 4
+                update_source_info(client, source_id, source_summary, word_estimate)
+                logging.info(f"   ✓ {source_id}: {len(stats['files'])} files, ~{word_estimate} words")
+        
+        # ========== Final Summary ==========
+        logging.info(f"\n{'='*60}")
+        logging.info(f"🎉 Processing Complete!")
+        logging.info(f"   Total files: {total_files}")
+        logging.info(f"   Successful: {successful_files}")
+        logging.info(f"   Failed: {failed_files}")
+        logging.info(f"   Total chunks: {total_chunks}")
+        logging.info(f"{'='*60}")
         
     except Exception as e:
         logging.error(f"❌ Error adding source files to Supabase: {e}")
