@@ -174,6 +174,8 @@ def determine_source_id(file_type: str) -> str:
         return "simics-dml"
     elif file_type == 'python':
         return "simics-python"
+    elif file_type == 'cpp':
+        return "simics-cc"
     else:
         return "simics-source"
 
@@ -216,7 +218,7 @@ def process_source_file(file_path: str, file_index: int = 0, total_files: int = 
         logging.error(f"    ❌ Error processing {file_path}: {e}")
         return None
 
-async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], simics_base_path: str, delete_existing: bool = True):
+async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], simics_base_path: str, delete_existing: bool = True, progress_tracker=None):
     """
     Add processed source files to Supabase.
     
@@ -231,6 +233,12 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
     - Incremental progress (each file is fully processed before moving to next)
     - Lower memory usage (no accumulation of all chunks)
     - Better error recovery (partial progress is saved)
+    
+    Args:
+        processed_files: List of processed file data
+        simics_base_path: Base path to Simics source
+        delete_existing: Whether to delete existing records
+        progress_tracker: ProgressTracker instance for tracking completion
     """
     try:
         from utils import get_supabase_client, add_documents_to_supabase
@@ -271,6 +279,17 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
             if source_id not in source_stats:
                 source_stats[source_id] = {'files': set(), 'chars': 0}
             
+            # Check if already completed
+            if progress_tracker and progress_tracker.is_completed(file_path):
+                logging.info(f"\n{'='*60}")
+                logging.info(f"⏭️  [{file_index}/{total_files}] {Path(file_path).name}")
+                logging.info(f"   ✅ Already completed - skipping")
+                successful_files += 1
+                # Update stats from tracker
+                file_stats = progress_tracker.progress_data.get(file_path, {})
+                total_chunks += file_stats.get("chunks_uploaded", 0)
+                continue
+            
             try:
                 logging.info(f"\n{'='*60}")
                 logging.info(f"📄 [{file_index}/{total_files}] {Path(file_path).name}")
@@ -286,11 +305,15 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
                         logging.info(f"   📝 Step 1: Generating file summary...")
                         file_summary = generate_file_summary(content, metadata)
                         logging.info(f"      ✓ Summary: {file_summary[:80]}...")
+                        if progress_tracker:
+                            progress_tracker.mark_step_completed(file_path, "file_summary")
                     except Exception as e:
                         logging.warning(f"      ⚠️ Failed to generate file summary: {e}")
                         file_summary = None
                 else:
                     logging.info(f"   📝 Step 1: Skipped (summarization disabled)")
+                    if progress_tracker:
+                        progress_tracker.mark_step_completed(file_path, "file_summary")
                 
                 # ========== STEP 2: Chunk the File ==========
                 logging.info(f"   📦 Step 2: Chunking file...")
@@ -303,6 +326,8 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
                 )
                 num_chunks = len(chunk_dicts)
                 logging.info(f"      ✓ Created {num_chunks} chunks")
+                if progress_tracker:
+                    progress_tracker.mark_step_completed(file_path, "chunking")
                 
                 # ========== STEP 3: Generate Chunk Summaries ==========
                 chunk_summaries = [None] * num_chunks
@@ -318,11 +343,15 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
                                 chunk_meta
                             )
                         logging.info(f"      ✓ Generated {num_chunks} chunk summaries")
+                        if progress_tracker:
+                            progress_tracker.mark_step_completed(file_path, "chunk_summaries")
                     except Exception as e:
                         logging.warning(f"      ⚠️ Failed to generate chunk summaries: {e}")
                         chunk_summaries = [None] * num_chunks
                 else:
                     logging.info(f"   📝 Step 3: Skipped (no file summary or no chunks)")
+                    if progress_tracker:
+                        progress_tracker.mark_step_completed(file_path, "chunk_summaries")
                 
                 # ========== STEP 4: Prepare Data for Embedding ==========
                 logging.info(f"   🔢 Step 4: Preparing data for embedding...")
@@ -369,6 +398,8 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
                     metadatas.append(chunk_metadata)
                 
                 logging.info(f"      ✓ Prepared {len(contents)} chunks for embedding")
+                if progress_tracker:
+                    progress_tracker.mark_step_completed(file_path, "prepare_embedding")
                 
                 # ========== STEP 5: Create Embeddings & Upload ==========
                 if contents:
@@ -388,6 +419,11 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
                     
                     logging.info(f"      ✓ Uploaded {len(contents)} chunks to Supabase")
                     
+                    # Mark as completed in progress tracker
+                    if progress_tracker:
+                        progress_tracker.mark_step_completed(file_path, "upload")
+                        progress_tracker.mark_completed(file_path, chunks_created=num_chunks, chunks_uploaded=len(contents))
+                    
                     # Update statistics
                     successful_files += 1
                     total_chunks += num_chunks
@@ -396,12 +432,16 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
                 else:
                     logging.warning(f"   ⚠️ No chunks to upload for this file")
                     failed_files += 1
+                    if progress_tracker:
+                        progress_tracker.mark_failed(file_path, "No chunks to upload")
                 
                 logging.info(f"   ✅ File completed successfully!")
                 
             except Exception as e:
                 logging.error(f"   ❌ Error processing file: {e}")
                 failed_files += 1
+                if progress_tracker:
+                    progress_tracker.mark_failed(file_path, str(e))
                 continue
         
         # ========== Update Source Info ==========
@@ -428,14 +468,28 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
         import traceback
         traceback.print_exc()
 
-async def crawl_simics_source(delete_existing: bool = True):
+async def crawl_simics_source(delete_existing: bool = True, clear_progress: bool = False):
     """Main function to crawl Simics source code."""
     # Get Simics path from environment
     simics_path = os.getenv("SIMICS_SOURCE_PATH", "simics-7-packages-2025-38-linux64/")
     
+    # Initialize progress tracker
+    from progress_tracker import ProgressTracker
+    progress_tracker = ProgressTracker()
+    
+    # Clear progress if requested
+    if clear_progress:
+        logging.info("🗑️  Clearing all progress tracking data...")
+        progress_tracker.clear()
+        logging.info("✨ Progress data cleared. Starting fresh crawl.\n")
+    
     start_time = time.time()
     logging.info(f"🚀 Starting Simics Source Code Crawling at {datetime.now().strftime('%H:%M:%S')}")
     logging.info(f"📁 Simics path: {simics_path}")
+    
+    # Show current progress
+    progress_tracker.print_summary()
+    
     logging.info("")
     
     # Find source files
@@ -447,6 +501,10 @@ async def crawl_simics_source(delete_existing: bool = True):
         return False
     
     logging.info(f"\n📋 Processing {total_files} source files...")
+    
+    # Add all files to progress tracker
+    all_file_paths = source_files['dml'] + source_files['python']
+    progress_tracker.add_files(all_file_paths)
     
     # Process all files
     processed_files = []
@@ -513,8 +571,14 @@ async def crawl_simics_source(delete_existing: bool = True):
             logging.info(f"   🔍 Sample URL: {sample_url}")
         
         upload_start_time = time.time()
-        await add_source_files_to_supabase(processed_files, simics_path, delete_existing)
+        await add_source_files_to_supabase(processed_files, simics_path, delete_existing, progress_tracker)
         upload_elapsed = time.time() - upload_start_time
+        
+        # Export checklist
+        progress_tracker.export_checklist()
+        
+        # Show final progress
+        progress_tracker.print_summary()
         
         total_elapsed = time.time() - start_time
         logging.info(f"\n⏱️ Timing Summary:")
@@ -574,6 +638,8 @@ Examples:
   python crawl_simics_source.py
   python crawl_simics_source.py --log-file simics_crawl.log
   python crawl_simics_source.py --log-file logs/simics_$(date +%Y%m%d_%H%M%S).log
+  python crawl_simics_source.py --clear-progress  # Start fresh, clear all progress
+  python crawl_simics_source.py --force-delete  # Delete existing DB records and re-upload
         """
     )
     parser.add_argument('--output-dir', help='Output directory (unused, for pipeline compatibility)')
@@ -590,6 +656,12 @@ Examples:
         '--force-delete',
         action='store_true', 
         help='Force deletion of existing records before inserting (overrides --skip-delete)'
+    )
+    
+    parser.add_argument(
+        '--clear-progress',
+        action='store_true',
+        help='Clear all progress tracking data before starting (forces full re-crawl)'
     )
     
     args = parser.parse_args()
@@ -622,7 +694,7 @@ Examples:
         return
     
     try:
-        success = asyncio.run(crawl_simics_source(delete_existing))
+        success = asyncio.run(crawl_simics_source(delete_existing, args.clear_progress))
         if success:
             logging.info("\n🎉 Simics source code crawling completed successfully!")
         else:

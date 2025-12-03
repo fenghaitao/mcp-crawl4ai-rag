@@ -15,6 +15,14 @@ create table sources (
     updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+-- Insert default source entries for Simics source code and documentation
+INSERT INTO sources (source_id, summary, total_word_count) VALUES
+    ('simics-dml', 'Simics Device Modeling Language (DML) source code files', 0),
+    ('simics-python', 'Simics Python source code files', 0),
+    ('simics-cc', 'Simics C/C++ modeling source code files', 0),
+    ('simics-source', 'General Simics source code files', 0)
+ON CONFLICT (source_id) DO NOTHING;
+
 -- Create the documentation chunks table
 create table crawled_pages (
     id bigserial primary key,
