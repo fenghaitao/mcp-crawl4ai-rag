@@ -168,6 +168,24 @@ def extract_python_metadata(content: str, file_path: str) -> dict:
     
     return metadata
 
+def is_dml_1_2(content: str) -> bool:
+    """
+    Check if a DML file is version 1.2 by looking for a line that starts with 'dml 1.2'.
+    
+    The line must:
+    - Start with 'dml 1.2' (no leading spaces or characters)
+    - Be followed by optional whitespace and a semicolon
+    
+    Args:
+        content: The file content
+        
+    Returns:
+        True if the file contains a line matching the pattern '^dml 1.2\s*;', False otherwise
+    """
+    # Pattern: line starts with 'dml 1.2', followed by optional whitespace, then semicolon
+    pattern = re.compile(r'^dml 1\.2\s*;', re.MULTILINE)
+    return pattern.search(content) is not None
+
 def determine_source_id(file_type: str) -> str:
     """Determine source_id based on file type."""
     if file_type == 'dml':
@@ -192,6 +210,11 @@ def process_source_file(file_path: str, file_index: int = 0, total_files: int = 
         # Determine file type
         file_ext = Path(file_path).suffix.lower()
         if file_ext == '.dml':
+            # Check if this is DML 1.2 (which we skip)
+            if is_dml_1_2(content):
+                logging.info(f"    ⏭️  Skipping DML 1.2 file")
+                return None
+            
             file_type = 'dml'
             metadata = extract_dml_metadata(content, file_path)
         elif file_ext == '.py':
