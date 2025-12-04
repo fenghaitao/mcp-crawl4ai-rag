@@ -85,6 +85,8 @@ def main():
                        help='Maximum number of URLs to process (site mode only)')
     parser.add_argument('--skip-simics-source', action='store_true',
                        help='Skip Simics source code crawling')
+    parser.add_argument('--process-manuals', action='store_true',
+                       help='Process user manuals after local file crawling')
     
     args = parser.parse_args()
     
@@ -105,6 +107,7 @@ def main():
     print(f"Skip download: {args.skip_download}")
     print(f"Skip crawl: {args.skip_crawl}")
     print(f"Skip Simics source: {args.skip_simics_source}")
+    print(f"Process manuals: {args.process_manuals}")
     if args.max_urls and args.mode == 'site':
         print(f"Max URLs to process: {args.max_urls}")
     
@@ -218,6 +221,21 @@ def main():
     else:
         print("\n🔄 Skipping Simics source crawling (CRAWL_SIMICS_SOURCE=false)")
         simics_success = True  # Don't fail the pipeline if it's disabled
+    
+    # Step 5: Process user manuals (if enabled)
+    if args.process_manuals:
+        manual_chunks_dir = output_dir / "manual_chunks"
+        manual_success = run_command([
+            python_exe, "scripts/chunk_user_manuals.py",
+            str(downloaded_pages_dir),
+            "--output-dir", str(manual_chunks_dir)
+        ], "User Manual Processing")
+        
+        if not manual_success:
+            print("⚠️  User manual processing failed, but continuing...")
+    else:
+        print("\n🔄 Skipping user manual processing (--process-manuals not set)")
+        manual_success = True  # Don't fail the pipeline if it's disabled
     
     # Final summary
     print(f"\n{'='*60}")

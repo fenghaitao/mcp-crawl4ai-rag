@@ -1,10 +1,23 @@
 """
-Code summarization module for Simics source code.
+Code summarization module for Simics source code and technical documentation.
 Provides file-level and chunk-level summarization with domain-specific prompts.
 """
 import os
-from typing import Dict, Any, Optional
-from iflow_client import create_chat_completion_iflow
+import sys
+from pathlib import Path
+from typing import Dict, Any, Optional, TYPE_CHECKING
+
+# Add src to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+
+try:
+    from iflow_client import create_chat_completion_iflow
+except ImportError:
+    from src.iflow_client import create_chat_completion_iflow
+
+if TYPE_CHECKING:
+    from user_manual_chunker.interfaces import DocumentChunk
+    from user_manual_chunker.data_models import ChunkMetadata
 
 
 # Simics-specific terminology and concepts
@@ -250,6 +263,133 @@ Summary:"""
             return f"{chunk_type.replace('_', ' ').title()} implementation"
         else:
             return f"Code segment from {language} file"
+
+
+def generate_documentation_summary(
+    chunk: 'DocumentChunk',
+    doc_context: str,
+    metadata: 'ChunkMetadata',
+    model: str = "iflow/qwen3-coder-plus",
+    max_tokens: int = 150
+) -> str:
+    """
+    Generate a summary for a documentation chunk.
+    
+    This function is specifically designed for technical documentation
+    (user manuals, API references, tutorials) as opposed to source code.
+    It integrates with the UserManualChunker pipeline.
+    
+    Args:
+        chunk: DocumentChunk object from user_manual_chunker
+        doc_context: High-level context about the document (e.g., document title)
+        metadata: ChunkMetadata object with section hierarchy and content info
+        model: Model to use for summarization
+        max_tokens: Maximum tokens for summary
+        
+    Returns:
+        Summary string describing the documentation chunk
+    """
+    # Extract metadata
+    heading_hierarchy = metadata.heading_hierarchy
+    contains_code = metadata.contains_code
+    code_languages = metadata.code_languages
+    
+    # Build heading context
+    if heading_hierarchy:
+        heading_context = " > ".join(heading_hierarchy)
+    else:
+        heading_context = "Unknown section"
+    
+    # Truncate chunk content for context
+    chunk_preview = chunk.content[:2000]
+    if len(chunk.content) > 2000:
+        chunk_preview += "\n... (truncated)"
+    
+    # Build documentation-specific prompt
+    if contains_code and code_languages:
+        # Documentation with code examples
+        languages_str = ", ".join(code_languages)
+        prompt = f"""You are analyzing a technical documentation section that includes code examples.
+
+Document: {doc_context}
+Section: {heading_context}
+Programming Languages: {languages_str}
+
+Content:
+```
+{chunk_preview}
+```
+
+Provide a concise 1-2 sentence summary covering:
+1. What concept or feature this section explains
+2. What the code examples demonstrate
+3. Key technical details or usage patterns
+
+Focus on what a developer would learn from this section.
+
+Summary:"""
+    
+    else:
+        # Documentation without code
+        prompt = f"""You are analyzing a technical documentation section.
+
+Document: {doc_context}
+Section: {heading_context}
+
+Content:
+```
+{chunk_preview}
+```
+
+Provide a concise 1-2 sentence summary covering:
+1. What concept or feature this section explains
+2. Key technical details or information
+3. How this relates to the overall documentation
+
+Focus on what a developer would learn from this section.
+
+Summary:"""
+    
+    try:
+        response = create_chat_completion_iflow(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+            temperature=0.3,
+            max_tokens=max_tokens
+        )
+        
+        summary = response["choices"][0]["message"]["content"].strip()
+        
+        # Remove any markdown formatting
+        summary = summary.replace("**", "").replace("*", "")
+        
+        # Ensure summary mentions code if present
+        if contains_code and "code" not in summary.lower() and "example" not in summary.lower():
+            # Add code mention if missing
+            summary = summary.rstrip('.') + " with code examples."
+        
+        return summary
+        
+    except Exception as e:
+        print(f"Warning: Failed to generate documentation summary: {e}")
+        
+        # Fallback to extractive summary
+        # Use first sentence or heading
+        if heading_hierarchy:
+            fallback = f"Documentation section on {heading_hierarchy[-1]}"
+            if contains_code:
+                fallback += " with code examples"
+            return fallback
+        else:
+            # Extract first sentence
+            sentences = chunk.content.split('.')
+            if sentences:
+                first_sentence = sentences[0].strip()
+                if len(first_sentence) > 150:
+                    first_sentence = first_sentence[:147] + "..."
+                return first_sentence
+            else:
+                return "Documentation section"
 
 
 def test_summarization():
