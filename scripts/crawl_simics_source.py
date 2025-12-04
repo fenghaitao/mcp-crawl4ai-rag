@@ -62,26 +62,51 @@ def get_github_url_for_file(file_path: str, simics_base_path: str) -> str:
         logging.warning(f"Failed to generate GitHub URL for {file_path}: {e}")
         return f"file://{os.path.abspath(file_path)}"
 
-def find_simics_source_files(simics_path: str) -> Dict[str, List[str]]:
-    """Find DML and Python files in Simics packages."""
+def find_simics_source_files(simics_path: str, file_types: str = "dml+python") -> Dict[str, List[str]]:
+    """
+    Find DML and/or Python files in Simics packages.
+    
+    Args:
+        simics_path: Path to Simics source directory
+        file_types: Which file types to include. Options: "dml", "python", "dml+python"
+    
+    Returns:
+        Dictionary with 'dml' and 'python' keys containing lists of file paths
+    """
     simics_path = Path(simics_path)
     
     if not simics_path.exists():
         logging.error(f"❌ Simics path not found: {simics_path}")
         return {'dml': [], 'python': []}
     
+    # Validate file_types parameter
+    valid_types = {"dml", "python", "dml+python"}
+    if file_types not in valid_types:
+        logging.warning(f"⚠️  Invalid file_types '{file_types}', using 'dml+python'")
+        file_types = "dml+python"
+    
     logging.info(f"🔍 Searching for source files in: {simics_path}")
+    logging.info(f"   📋 File types: {file_types}")
     start_time = time.time()
     
-    # Find DML files
-    logging.info("   📄 Scanning for DML files...")
-    dml_files = list(simics_path.rglob("*.dml"))
-    logging.info(f"   ✅ Found {len(dml_files)} DML files")
+    dml_files = []
+    python_files = []
     
-    # Find Python files
-    logging.info("   🐍 Scanning for Python files...")
-    python_files = list(simics_path.rglob("*.py"))
-    logging.info(f"   ✅ Found {len(python_files)} Python files")
+    # Find DML files if requested
+    if file_types in ("dml", "dml+python"):
+        logging.info("   📄 Scanning for DML files...")
+        dml_files = list(simics_path.rglob("*.dml"))
+        logging.info(f"   ✅ Found {len(dml_files)} DML files")
+    else:
+        logging.info("   ⏭️  Skipping DML files (not selected)")
+    
+    # Find Python files if requested
+    if file_types in ("python", "dml+python"):
+        logging.info("   🐍 Scanning for Python files...")
+        python_files = list(simics_path.rglob("*.py"))
+        logging.info(f"   ✅ Found {len(python_files)} Python files")
+    else:
+        logging.info("   ⏭️  Skipping Python files (not selected)")
     
     elapsed = time.time() - start_time
     total_files = len(dml_files) + len(python_files)
@@ -491,8 +516,15 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
         import traceback
         traceback.print_exc()
 
-async def crawl_simics_source(delete_existing: bool = True, clear_progress: bool = False):
-    """Main function to crawl Simics source code."""
+async def crawl_simics_source(delete_existing: bool = True, clear_progress: bool = False, file_types: str = "dml+python"):
+    """
+    Main function to crawl Simics source code.
+    
+    Args:
+        delete_existing: Whether to delete existing records before inserting
+        clear_progress: Whether to clear all progress tracking data
+        file_types: Which file types to process. Options: "dml", "python", "dml+python"
+    """
     # Get Simics path from environment
     simics_path = os.getenv("SIMICS_SOURCE_PATH", "simics-7-packages-2025-38-linux64/")
     
@@ -509,6 +541,7 @@ async def crawl_simics_source(delete_existing: bool = True, clear_progress: bool
     start_time = time.time()
     logging.info(f"🚀 Starting Simics Source Code Crawling at {datetime.now().strftime('%H:%M:%S')}")
     logging.info(f"📁 Simics path: {simics_path}")
+    logging.info(f"📝 File types to process: {file_types}")
     
     # Show current progress
     progress_tracker.print_summary()
@@ -516,7 +549,7 @@ async def crawl_simics_source(delete_existing: bool = True, clear_progress: bool
     logging.info("")
     
     # Find source files
-    source_files = find_simics_source_files(simics_path)
+    source_files = find_simics_source_files(simics_path, file_types)
     total_files = len(source_files['dml']) + len(source_files['python'])
     
     if total_files == 0:
@@ -663,6 +696,9 @@ Examples:
   python crawl_simics_source.py --log-file logs/simics_$(date +%Y%m%d_%H%M%S).log
   python crawl_simics_source.py --clear-progress  # Start fresh, clear all progress
   python crawl_simics_source.py --force-delete  # Delete existing DB records and re-upload
+  python crawl_simics_source.py --file-types dml  # Only process DML files
+  python crawl_simics_source.py --file-types python  # Only process Python files
+  python crawl_simics_source.py -t dml+python  # Process both (default)
         """
     )
     parser.add_argument('--output-dir', help='Output directory (unused, for pipeline compatibility)')
@@ -687,6 +723,15 @@ Examples:
         help='Clear all progress tracking data before starting (forces full re-crawl)'
     )
     
+    parser.add_argument(
+        '--file-types',
+        '-t',
+        type=str,
+        default='dml+python',
+        choices=['dml', 'python', 'dml+python'],
+        help='Which file types to process (default: dml+python)'
+    )
+    
     args = parser.parse_args()
     
     # Setup logging
@@ -705,6 +750,7 @@ Examples:
         logger.info(f"Output dir: {args.output_dir or 'N/A'}")
         logger.info(f"Log file: {args.log_file}")
         logger.info(f"Delete existing records: {delete_existing}")
+        logger.info(f"File types: {args.file_types}")
         logger.info("-" * 80)
     
     # Load environment variables
@@ -717,7 +763,7 @@ Examples:
         return
     
     try:
-        success = asyncio.run(crawl_simics_source(delete_existing, args.clear_progress))
+        success = asyncio.run(crawl_simics_source(delete_existing, args.clear_progress, args.file_types))
         if success:
             logging.info("\n🎉 Simics source code crawling completed successfully!")
         else:
