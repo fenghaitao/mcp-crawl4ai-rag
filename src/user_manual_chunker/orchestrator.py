@@ -72,7 +72,7 @@ class UserManualChunker:
         
         # Initialize components with defaults if not provided
         self.parser = parser or MarkdownParser()
-        self.chunker = chunker or SemanticChunker.from_config(self.config)
+        self.chunker = chunker or PatternAwareSemanticChunker.from_config(self.config)
         self.metadata_extractor = metadata_extractor or MetadataExtractor()
         
         # Initialize optional components based on config
