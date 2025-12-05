@@ -1,212 +1,114 @@
-# Tests for crawl4ai-mcp
+# Test Suite Organization
 
-This directory contains integration tests for the crawl4ai-mcp project, including tests for Neo4j knowledge graph functionality and GitHub Copilot integration.
+This directory contains all test files organized by type and scope.
 
-## Test Files
+## 📁 Directory Structure
 
-### Core Integration Tests
+### `/unit/` - Unit Tests
+Component-level tests that test individual functions and classes in isolation:
+- `test_semantic_chunker_*.py` - Semantic chunking logic tests
+- `test_pattern_handlers.py` - Pattern detection and handling tests  
+- `test_metadata_*.py` - Metadata extraction and processing tests
+- `test_embedding_generator.py` - Embedding generation tests
+- `test_summary_generator.py` - Summary generation tests
+- `test_orchestrator.py` - Orchestrator component tests
+- `test_error_handling.py` - Error handling and edge case tests
+- `test_*_dml_*.py` - DML-specific functionality tests
 
-- **`test_neo4j_integration.py`** - Tests Neo4j connection, knowledge graph tools, and repository parsing
-- **`test_copilot_integration.py`** - Tests GitHub Copilot client (embeddings and chat completions)
-- **`test_mcp_server.py`** - Tests MCP server configuration and runtime status
-- **`run_all_tests.py`** - Test runner that executes all integration tests
+### `/integration/` - Integration Tests
+End-to-end tests that verify component interactions:
+- `test_*integration*.py` - Cross-component integration tests
+- `test_requirements_validation.py` - System requirements validation
+- `test_astchunk_integration.py` - AST chunking integration tests
 
-### Sample Files
+### `/fixtures/` - Test Data & Fixtures
+Reusable test data, sample documents, and test fixtures:
+- Sample documents (markdown, HTML, DML files)
+- Expected output files
+- Mock data for testing
+- Configuration files for tests
 
-- **`sample_code_for_validation.py`** - Sample Python code for testing hallucination detection
-
-## Prerequisites
-
-Before running tests, ensure you have the following configured:
-
-### Required Environment Variables
-
-```bash
-# Neo4j Configuration
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=your_neo4j_password
-USE_KNOWLEDGE_GRAPH=true
-
-# AI Provider Configuration (choose one or both)
-# For GitHub Copilot
-GITHUB_TOKEN=your_github_token
-USE_COPILOT_EMBEDDINGS=true
-USE_COPILOT_CHAT=true
-
-# For OpenAI (fallback or primary)
-OPENAI_API_KEY=your_openai_api_key
-USE_COPILOT_EMBEDDINGS=false
-USE_COPILOT_CHAT=false
-```
-
-### System Requirements
-
-- Neo4j database running on localhost:7687
-- GitHub Copilot subscription (for Copilot tests)
-- OpenAI API key (for fallback or primary usage)
-- Python 3.12+ with required dependencies installed
-
-## Running Tests
+## 🧪 Running Tests
 
 ### Run All Tests
-
-The test runner automatically loads environment variables from `.env` file:
-
 ```bash
-# From project root - automatically loads .env file
-.venv/bin/python tests/run_all_tests.py
+# Run the entire test suite
+python -m pytest tests/
 
-# Override specific variables if needed
-GITHUB_TOKEN=your_token .venv/bin/python tests/run_all_tests.py
+# Run with verbose output
+python -m pytest tests/ -v
+
+# Run with coverage
+python -m pytest tests/ --cov=src/
 ```
 
-### Run Individual Test Suites
-
-Individual test files also automatically load `.env` when run directly:
-
+### Run Specific Test Categories
 ```bash
-# Neo4j integration tests (auto-loads .env)
-.venv/bin/python tests/test_neo4j_integration.py
+# Run only unit tests
+python -m pytest tests/unit/
 
-# GitHub Copilot integration tests (auto-loads .env)
-.venv/bin/python tests/test_copilot_integration.py
+# Run only integration tests
+python -m pytest tests/integration/
+
+# Run specific component tests
+python -m pytest tests/unit/test_semantic_chunker_*.py
 ```
 
-### Run with pytest
-
+### Run Individual Test Files
 ```bash
-# Install pytest if not already installed
-.venv/bin/pip install pytest pytest-asyncio
+# Run specific test file
+python -m pytest tests/unit/test_pattern_handlers.py
 
-# Run all tests
-.venv/bin/python -m pytest tests/ -v
-
-# Run specific test
-.venv/bin/python -m pytest tests/test_neo4j_integration.py -v
-
-# Run integration tests only
-.venv/bin/python -m pytest tests/ -v -m integration
+# Run specific test with verbose output
+python -m pytest tests/unit/test_embedding_generator.py -v
 ```
 
-## Test Coverage
+## 📋 Test Categories by Component
 
-### Neo4j Integration Tests
+### Chunking System Tests
+- `test_semantic_chunker_basic.py`
+- `test_semantic_chunker_comprehensive.py`
+- `test_pattern_aware_semantic_chunker.py`
+- `test_pattern_handlers.py`
+- `test_pattern_integration.py`
 
-- ✅ **Connection Test** - Verifies Neo4j database connectivity
-- ✅ **Module Import Test** - Ensures all knowledge graph modules load correctly
-- ✅ **Repository Parsing Test** - Tests DirectNeo4jExtractor functionality
-- ✅ **Query Operations Test** - Validates database read/write operations
-- ✅ **Sample Code Generation** - Creates test files for hallucination detection
+### Data Processing Tests
+- `test_metadata_extractor.py`
+- `test_metadata_edge_cases.py`
+- `test_metadata_integration.py`
+- `test_embedding_generator.py`
+- `test_summary_generator.py`
 
-### GitHub Copilot Integration Tests
+### Integration & Workflow Tests
+- `test_orchestrator.py`
+- `test_orchestrator_integration.py`
+- `test_integration.py`
+- `test_astchunk_integration.py`
 
-- ✅ **Embedding Tests** - Single and batch embedding generation
-- ✅ **Chat Completion Tests** - GPT-4o chat model integration
-- ✅ **Utils Integration** - Tests unified embedding/chat functions
-- ✅ **Fallback Behavior** - Ensures OpenAI fallback works when Copilot unavailable
+### Specialized Tests
+- `test_dml_parser.py` - DML language parsing
+- `test_code_summarization.py` - Code summarization features
+- `test_file_type_selection.py` - File type detection
+- `test_progress_tracker.py` - Progress tracking functionality
 
-### MCP Server Validation Tests
+## 🔧 Test Configuration
 
-- ✅ **Process Check** - Verifies MCP server is running
-- ✅ **Configuration Test** - Validates all environment variables
-- ✅ **Database Connectivity** - Tests Supabase and Neo4j configuration
-- ✅ **AI Provider Setup** - Validates GitHub Copilot and OpenAI configuration
-- ✅ **RAG Features** - Confirms all advanced features are enabled
-- ✅ **Tool Availability** - Lists all 8 available MCP tools
-- ✅ **Rate Limiting** - Validates rate limiting configuration
+### Environment Setup
+Tests use the same configuration as the main application but may override certain settings for testing purposes.
 
-## Expected Output
+### Test Data
+Test fixtures and sample data should be placed in `/fixtures/` directory and reused across tests when possible.
 
-### Successful Test Run
+### Mocking
+Tests use appropriate mocking for external dependencies (APIs, databases, file systems) to ensure reliable and fast test execution.
 
-```
-🚀 crawl4ai-mcp Integration Test Suite
-============================================================
-Environment Configuration Check
-============================================================
-Environment Variables:
-  ✅ NEO4J_URI: bolt://localhost:7687
-  ✅ NEO4J_USER: neo4j
-  ✅ NEO4J_PASSWORD: ********
-  ✅ USE_KNOWLEDGE_GRAPH: true
-  ✅ GITHUB_TOKEN: ********
-  ✅ USE_COPILOT_EMBEDDINGS: true
-  ✅ USE_COPILOT_CHAT: true
-
-✅ All critical configurations present
-
-============================================================
-Running Neo4j Integration Tests
-============================================================
-Testing Neo4j connection...
-✅ Neo4j connection successful!
-✅ Neo4j Version: 2025.09.0
-...
-🎉 All Neo4j integration tests passed!
-
-============================================================
-Running GitHub Copilot Integration Tests
-============================================================
-Testing GitHub Copilot Embedding Client...
-✅ Copilot client initialized successfully
-...
-🎉 All Copilot integration tests passed!
-
-============================================================
-TEST SUMMARY
-============================================================
-Neo4j Integration: ✅ PASSED
-GitHub Copilot Integration: ✅ PASSED
-
-Results: 2/2 test suites passed
-🎉 All integration tests passed!
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Neo4j Connection Failed**
-   - Ensure Neo4j is running on localhost:7687
-   - Check NEO4J_PASSWORD is correct
-   - Verify NEO4J_USER (usually 'neo4j')
-
-2. **Copilot Tests Skipped**
-   - Set GITHUB_TOKEN environment variable
-   - Ensure you have an active GitHub Copilot subscription
-   - Check token has appropriate permissions
-
-3. **Import Errors**
-   - Run tests from project root directory
-   - Ensure virtual environment is activated
-   - Install missing dependencies with `uv pip install -e .`
-
-### Debug Mode
-
-To get more detailed output, run individual test files directly:
-
-```bash
-.venv/bin/python tests/test_neo4j_integration.py
-.venv/bin/python tests/test_copilot_integration.py
-```
-
-## Contributing
+## 📝 Writing New Tests
 
 When adding new tests:
-
-1. Follow the existing naming convention: `test_*.py`
-2. Include both unit tests and integration tests
-3. Add appropriate pytest markers (`@pytest.mark.integration`)
-4. Update this README with new test descriptions
-5. Ensure tests can be run both individually and via the test runner
-
-## Integration with CI/CD
-
-These tests are designed to work in CI/CD environments. Set the required environment variables in your CI configuration and run:
-
-```bash
-.venv/bin/python tests/run_all_tests.py
-```
-
-The test runner exits with code 0 on success and 1 on failure, making it suitable for automated testing pipelines.
+1. Place unit tests in `/unit/` directory
+2. Place integration tests in `/integration/` directory
+3. Use descriptive test function names
+4. Include docstrings explaining what the test verifies
+5. Use appropriate fixtures from `/fixtures/` directory
+6. Mock external dependencies appropriately
+7. Follow existing test patterns and conventions
