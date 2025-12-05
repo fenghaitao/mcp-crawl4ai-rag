@@ -24,9 +24,14 @@ class ChunkerConfig:
     embedding_model: str = "text-embedding-3-small"
     summary_model: str = "iflow/qwen3-coder-plus"
     
+    # Embedding provider selection (aligned with .env)
+    use_qwen_embeddings: bool = False
+    use_copilot_embeddings: bool = True
+    
     # Processing options
     generate_summaries: bool = True
     generate_embeddings: bool = True
+    use_contextual_embeddings: bool = True
     
     # Batch processing
     embedding_batch_size: int = 32
@@ -34,6 +39,9 @@ class ChunkerConfig:
     # Summary configuration
     max_summary_length: int = 150
     summary_timeout_seconds: int = 30
+    
+    # Rate limiting (aligned with .env)
+    copilot_requests_per_minute: int = 60
     
     # Error handling
     embedding_retry_attempts: int = 3
@@ -54,6 +62,14 @@ class ChunkerConfig:
             MANUAL_GENERATE_SUMMARIES: Generate summaries (default: true)
             MANUAL_GENERATE_EMBEDDINGS: Generate embeddings (default: true)
             
+            # Embedding provider selection (from .env)
+            USE_QWEN_EMBEDDINGS: Use local Qwen model for embeddings (default: false)
+            USE_COPILOT_EMBEDDINGS: Use GitHub Copilot for embeddings (default: true)
+            USE_CONTEXTUAL_EMBEDDINGS: Use contextual embeddings for better retrieval (default: true)
+            
+            # Rate limiting (from .env)
+            COPILOT_REQUESTS_PER_MINUTE: Rate limit for Copilot API (default: 60)
+            
         Returns:
             ChunkerConfig instance with values from environment or defaults
         """
@@ -64,8 +80,12 @@ class ChunkerConfig:
             size_metric=os.getenv("MANUAL_SIZE_METRIC", "characters"),
             embedding_model=os.getenv("MANUAL_EMBEDDING_MODEL", "text-embedding-3-small"),
             summary_model=os.getenv("MANUAL_SUMMARY_MODEL", "iflow/qwen3-coder-plus"),
+            use_qwen_embeddings=os.getenv("USE_QWEN_EMBEDDINGS", "false").lower() == "true",
+            use_copilot_embeddings=os.getenv("USE_COPILOT_EMBEDDINGS", "true").lower() == "true",
             generate_summaries=os.getenv("MANUAL_GENERATE_SUMMARIES", "true").lower() == "true",
             generate_embeddings=os.getenv("MANUAL_GENERATE_EMBEDDINGS", "true").lower() == "true",
+            use_contextual_embeddings=os.getenv("USE_CONTEXTUAL_EMBEDDINGS", "true").lower() == "true",
+            copilot_requests_per_minute=int(os.getenv("COPILOT_REQUESTS_PER_MINUTE", "60")),
         )
     
     def validate(self) -> None:

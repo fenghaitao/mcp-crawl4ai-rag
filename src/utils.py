@@ -1233,7 +1233,8 @@ def add_documentation_chunks_to_supabase(
             for source_file in unique_sources:
                 try:
                     # Use metadata filter to find matching records
-                    client.table("crawled_pages").delete().eq("metadata->>source_file", source_file).execute()
+                    client.table("crawled_pages").delete().in_("url", source_file).execute()
+
                 except Exception as e:
                     print(f"Error deleting records for {source_file}: {e}")
         except Exception as e:
@@ -1253,16 +1254,21 @@ def add_documentation_chunks_to_supabase(
             metadata = chunk['metadata']
             
             # Determine content type based on code presence
-            if metadata.get('contains_code', False):
-                content_type = 'mixed'  # Documentation with code examples
-            else:
-                content_type = 'documentation'
+            # if metadata.get('contains_code', False):
+            #     content_type = 'mixed'  # Documentation with code examples
+            # else:
+            #     content_type = 'documentation'
             
             # Extract source_id from source_file
             source_file = metadata.get('source_file', '')
-            # Use filename without extension as source_id
+            # Use a consistent source_id for documentation
+            # Check if source_id is provided in metadata, otherwise use default
             from pathlib import Path
-            source_id = Path(source_file).stem if source_file else 'unknown'
+            if 'source_id' in metadata:
+                source_id = metadata['source_id']
+            else:
+                # Use 'user-documentation' as default for all user manual chunks
+                source_id = 'docs'
             
             # Prepare record for insertion
             record = {
@@ -1271,8 +1277,8 @@ def add_documentation_chunks_to_supabase(
                 "content": chunk['content'],
                 "metadata": metadata,
                 "source_id": source_id,
-                "content_type": content_type,
-                "heading_hierarchy": metadata.get('heading_hierarchy', []),
+                #"content_type": content_type,
+                #"heading_hierarchy": metadata.get('heading_hierarchy', []),
                 "embedding": chunk.get('embedding')
             }
             

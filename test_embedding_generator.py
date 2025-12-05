@@ -129,10 +129,10 @@ def test_normalize_vectors_batch():
         assert abs(norm - 1.0) < 1e-6
 
 
-@patch('src.user_manual_chunker.embedding_generator.create_embeddings_batch_copilot')
+@patch('src.user_manual_chunker.embedding_generator.create_embeddings_batch')
 def test_generate_embeddings_batch(mock_batch_embed):
     """Test batch embedding generation."""
-    # Mock the Copilot API to return embeddings
+    # Mock the flexible embedding API to return embeddings
     mock_embeddings = [
         [0.1] * 1536,
         [0.2] * 1536,
@@ -156,10 +156,10 @@ def test_generate_embeddings_batch(mock_batch_embed):
     assert all(emb.dtype == np.float32 for emb in embeddings)
 
 
-@patch('src.user_manual_chunker.embedding_generator.create_embeddings_batch_copilot')
+@patch('src.user_manual_chunker.embedding_generator.create_embeddings_batch')
 def test_generate_embeddings_with_normalization(mock_batch_embed):
     """Test that embeddings are normalized when requested."""
-    # Mock the Copilot API to return non-normalized embeddings
+    # Mock the flexible embedding API to return non-normalized embeddings
     mock_embeddings = [
         [3.0, 4.0] + [0.0] * 1534,  # L2 norm = 5.0
         [1.0, 0.0] + [0.0] * 1534   # L2 norm = 1.0
@@ -181,10 +181,10 @@ def test_generate_embeddings_with_normalization(mock_batch_embed):
         assert abs(norm - 1.0) < 1e-5
 
 
-@patch('src.user_manual_chunker.embedding_generator.create_embeddings_batch_copilot')
+@patch('src.user_manual_chunker.embedding_generator.create_embeddings_batch')
 def test_generate_embeddings_error_handling(mock_batch_embed):
     """Test that errors are logged and processing continues."""
-    # Mock the Copilot API to raise an exception
+    # Mock the flexible embedding API to raise an exception
     mock_batch_embed.side_effect = Exception("API Error")
     
     gen = EmbeddingGenerator()
@@ -203,10 +203,10 @@ def test_generate_embeddings_error_handling(mock_batch_embed):
         assert np.allclose(emb, np.zeros(1536, dtype=np.float32))
 
 
-@patch('src.user_manual_chunker.embedding_generator.create_embedding_copilot')
+@patch('src.user_manual_chunker.embedding_generator.create_embedding')
 def test_generate_embedding_single(mock_single_embed):
     """Test single embedding generation."""
-    # Mock the Copilot API
+    # Mock the flexible embedding API
     mock_embedding = [0.5] * 1536
     mock_single_embed.return_value = mock_embedding
     
@@ -220,10 +220,10 @@ def test_generate_embedding_single(mock_single_embed):
     assert embedding.dtype == np.float32
 
 
-@patch('src.user_manual_chunker.embedding_generator.create_embedding_copilot')
+@patch('src.user_manual_chunker.embedding_generator.create_embedding')
 def test_generate_embedding_single_error_handling(mock_single_embed):
     """Test single embedding error handling."""
-    # Mock the Copilot API to raise an exception
+    # Mock the flexible embedding API to raise an exception
     mock_single_embed.side_effect = Exception("API Error")
     
     gen = EmbeddingGenerator()
@@ -236,7 +236,7 @@ def test_generate_embedding_single_error_handling(mock_single_embed):
     assert np.allclose(embedding, np.zeros(1536, dtype=np.float32))
 
 
-@patch('src.user_manual_chunker.embedding_generator.create_embeddings_batch_copilot')
+@patch('src.user_manual_chunker.embedding_generator.create_embeddings_batch')
 def test_generate_embeddings_empty_list(mock_batch_embed):
     """Test handling of empty chunk list."""
     gen = EmbeddingGenerator()
@@ -248,10 +248,10 @@ def test_generate_embeddings_empty_list(mock_batch_embed):
     mock_batch_embed.assert_not_called()
 
 
-@patch('src.user_manual_chunker.embedding_generator.create_embeddings_batch_copilot')
+@patch('src.user_manual_chunker.embedding_generator.create_embeddings_batch')
 def test_generate_embeddings_batching(mock_batch_embed):
     """Test that chunks are processed in batches."""
-    # Mock the Copilot API to return correct number of embeddings per batch
+    # Mock the flexible embedding API to return correct number of embeddings per batch
     def side_effect(texts):
         return [[0.1] * 1536] * len(texts)
     

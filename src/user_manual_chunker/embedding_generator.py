@@ -1,8 +1,16 @@
 """
 Embedding generator for user manual chunks.
 
-Generates vector embeddings for document chunks using the existing
-embedding infrastructure (Copilot API).
+Generates vector embeddings for document chunks using the flexible
+embedding infrastructure from utils.py, which supports:
+- Qwen embeddings (local model)
+- GitHub Copilot embeddings
+- OpenAI embeddings (fallback)
+
+The embedding provider is selected based on environment variables:
+- USE_QWEN_EMBEDDINGS=true: Use local Qwen model
+- USE_COPILOT_EMBEDDINGS=true: Use GitHub Copilot
+- Otherwise: Use OpenAI (default)
 """
 
 import numpy as np
@@ -13,10 +21,11 @@ import logging
 import time
 from collections import deque
 
-# Add parent directory to path to import copilot_client
+# Add parent directory to path to import utils
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from copilot_client import create_embeddings_batch_copilot, create_embedding_copilot
+# Import the flexible embedding functions from utils
+from utils import create_embeddings_batch, create_embedding
 from .interfaces import DocumentChunk
 from .data_models import ProcessedChunk
 
@@ -110,25 +119,45 @@ class EmbeddingGenerator:
     
     def generate_embeddings(
         self,
-        chunks: List[DocumentChunk]
+        chunks: List[DocumentChunk],
+        summaries: Optional[List[Optional[str]]] = None
     ) -> List[np.ndarray]:
         """
         Generate embeddings for a list of chunks in batches.
+        
+        Combines chunk content with summaries for better retrieval.
+        This improves search quality by including semantic context from summaries.
         
         Implements retry with exponential backoff and rate limiting.
         Handles batch failures by processing chunks individually.
         
         Args:
             chunks: List of DocumentChunk objects to embed
+            summaries: Optional list of summaries (one per chunk).
+                      If provided, summaries are appended to chunk content
+                      before embedding for better semantic representation.
             
         Returns:
             List of embedding vectors as numpy arrays
+            
+        Example:
+            Without summary: "The DML language supports..."
+            With summary: "Summary: Overview of DML language features\n\nThe DML language supports..."
         """
         if not chunks:
             return []
         
-        # Extract text content from chunks, preserving code syntax
-        texts = [self._prepare_text_for_embedding(chunk) for chunk in chunks]
+        # Extract text content from chunks, optionally combining with summaries
+        texts = []
+        for i, chunk in enumerate(chunks):
+            base_text = self._prepare_text_for_embedding(chunk)
+            
+            # Combine with summary if available (improves retrieval quality)
+            if summaries and i < len(summaries) and summaries[i]:
+                combined_text = f"Summary: {summaries[i]}\n\n{base_text}"
+                texts.append(combined_text)
+            else:
+                texts.append(base_text)
         
         # Generate embeddings in batches
         all_embeddings = []
@@ -161,6 +190,11 @@ class EmbeddingGenerator:
         """
         Generate embeddings for a batch with retry logic.
         
+        Uses the flexible embedding system from utils.py that supports:
+        - Qwen embeddings (local model)
+        - GitHub Copilot embeddings
+        - OpenAI embeddings (fallback)
+        
         Args:
             texts: List of text strings to embed
             batch_num: Batch number for logging
@@ -173,8 +207,9 @@ class EmbeddingGenerator:
                 # Apply rate limiting
                 self.rate_limiter.acquire()
                 
-                # Use Copilot client for batch embedding
-                batch_embeddings = create_embeddings_batch_copilot(texts)
+                # Use flexible embedding system from utils.py
+                # This automatically handles Qwen -> Copilot -> OpenAI fallback
+                batch_embeddings = create_embeddings_batch(texts)
                 
                 # Convert to numpy arrays
                 batch_embeddings_np = [np.array(emb, dtype=np.float32) for emb in batch_embeddings]
@@ -226,6 +261,11 @@ class EmbeddingGenerator:
         """
         Generate embedding for a single text with retry logic.
         
+        Uses the flexible embedding system from utils.py that supports:
+        - Qwen embeddings (local model)
+        - GitHub Copilot embeddings
+        - OpenAI embeddings (fallback)
+        
         Args:
             text: Text to embed
             identifier: Identifier for logging
@@ -238,8 +278,9 @@ class EmbeddingGenerator:
                 # Apply rate limiting
                 self.rate_limiter.acquire()
                 
-                # Use Copilot client for single embedding
-                embedding = create_embedding_copilot(text)
+                # Use flexible embedding system from utils.py
+                # This automatically handles Qwen -> Copilot -> OpenAI fallback
+                embedding = create_embedding(text)
                 
                 # Convert to numpy array
                 embedding_np = np.array(embedding, dtype=np.float32)
@@ -330,6 +371,7 @@ class EmbeddingGenerator:
         """
         Generate embeddings and add them to ProcessedChunk objects.
         
+        Combines chunk content with summaries for better retrieval.
         This is a convenience method that generates embeddings for chunks
         and updates the corresponding ProcessedChunk objects in-place.
         
@@ -347,8 +389,11 @@ class EmbeddingGenerator:
                 f"processed_chunks ({len(processed_chunks)})"
             )
         
-        # Generate all embeddings
-        embeddings = self.generate_embeddings(chunks)
+        # Extract summaries from processed chunks
+        summaries = [pc.summary for pc in processed_chunks]
+        
+        # Generate all embeddings (combining content + summary)
+        embeddings = self.generate_embeddings(chunks, summaries)
         
         # Add embeddings to processed chunks
         for processed_chunk, embedding in zip(processed_chunks, embeddings):

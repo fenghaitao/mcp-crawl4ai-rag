@@ -19,7 +19,7 @@ from .data_models import DocumentStructure, ProcessedChunk, ChunkMetadata
 from .config import ChunkerConfig
 from .markdown_parser import MarkdownParser
 from .html_parser import HTMLParser
-from .semantic_chunker import SemanticChunker
+from .semantic_chunker import SemanticChunker, PatternAwareSemanticChunker
 from .metadata_extractor import MetadataExtractor
 from .summary_generator import SummaryGenerator
 from .embedding_generator import EmbeddingGenerator
@@ -89,7 +89,11 @@ class UserManualChunker:
             self.embedding_generator = embedding_generator or EmbeddingGenerator(
                 model=self.config.embedding_model,
                 batch_size=self.config.embedding_batch_size,
-                normalize=True
+                normalize=True,
+                max_retries=self.config.embedding_retry_attempts,
+                initial_retry_delay=1.0,
+                rate_limit_requests=self.config.copilot_requests_per_minute,
+                rate_limit_window=60.0
             )
         else:
             self.embedding_generator = None
@@ -218,7 +222,11 @@ class UserManualChunker:
         if generate_embeddings and self.embedding_generator:
             logger.info("Generating embeddings...")
             try:
-                embeddings = self.embedding_generator.generate_embeddings(chunks)
+                # Extract summaries from processed chunks
+                summaries = [pc.summary for pc in processed_chunks]
+                
+                # Generate embeddings combining content + summary
+                embeddings = self.embedding_generator.generate_embeddings(chunks, summaries)
                 
                 for processed_chunk, embedding in zip(processed_chunks, embeddings):
                     processed_chunk.embedding = embedding

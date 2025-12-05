@@ -3,7 +3,7 @@
 User Manual Chunking Script.
 
 Processes user manual documents (markdown/HTML) and generates chunks with
-embeddings and metadata for RAG retrieval.
+embeddings and metadata for RAG retrieval. Optionally uploads to Supabase.
 """
 
 import os
@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from user_manual_chunker import UserManualChunker
 from user_manual_chunker.config import ChunkerConfig
+from utils import get_supabase_client, add_documentation_chunks_to_supabase
 
 
 def setup_logging(verbose: bool = False):
@@ -71,6 +72,22 @@ def main():
         '--verbose', '-v',
         action='store_true',
         help='Enable verbose logging'
+    )
+    parser.add_argument(
+        '--upload-to-supabase',
+        action='store_true',
+        help='Upload chunks to Supabase database'
+    )
+    parser.add_argument(
+        '--skip-delete',
+        action='store_true',
+        help='Skip deleting existing records (use upsert instead)'
+    )
+    parser.add_argument(
+        '--batch-size',
+        type=int,
+        default=50,
+        help='Batch size for Supabase uploads (default: 50)'
     )
     
     args = parser.parse_args()
@@ -152,6 +169,38 @@ def main():
             vector_db_output = output_dir / "vector_db_chunks.json"
             logger.info(f"Exporting to vector DB format: {vector_db_output}")
             chunker.export_to_vector_db_format(chunks, str(vector_db_output))
+            
+            # Upload to Supabase if requested
+            if args.upload_to_supabase:
+                logger.info("=" * 60)
+                logger.info("Uploading to Supabase")
+                logger.info("=" * 60)
+                
+                try:
+                    # Get Supabase client
+                    supabase_client = get_supabase_client()
+                    logger.info("✓ Connected to Supabase")
+                    
+                    # Convert ProcessedChunk objects to dictionaries
+                    chunk_dicts = [chunk.to_dict() for chunk in chunks]
+                    
+                    # Upload to Supabase
+                    logger.info(f"Uploading {len(chunk_dicts)} chunks...")
+                    logger.info(f"Delete existing: {not args.skip_delete}")
+                    logger.info(f"Batch size: {args.batch_size}")
+                    
+                    add_documentation_chunks_to_supabase(
+                        client=supabase_client,
+                        chunks=chunk_dicts,
+                        delete_existing=not args.skip_delete,
+                        batch_size=args.batch_size
+                    )
+                    
+                    logger.info("✓ Upload to Supabase complete!")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to upload to Supabase: {e}", exc_info=True)
+                    logger.warning("Chunks were saved to local files but not uploaded to database")
             
             # Print statistics
             stats = chunker.get_statistics()
