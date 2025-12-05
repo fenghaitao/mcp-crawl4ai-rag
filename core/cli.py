@@ -11,8 +11,13 @@ This module provides a comprehensive command-line interface that integrates:
 
 import click
 import sys
+import os
 from pathlib import Path
 from typing import Optional
+
+# Load environment variables from .env file at module level
+from dotenv import load_dotenv
+load_dotenv()  # Automatically finds .env file in current dir or parent dirs
 
 # Version information
 __version__ = "1.0.0"
@@ -191,30 +196,7 @@ def info(ctx):
         click.echo("Gathering database information...")
     
     try:
-        import os
         from pathlib import Path
-        
-        # Load environment variables from .env file
-        try:
-            from dotenv import load_dotenv
-            project_root = Path(__file__).parent.parent
-            env_file = project_root / ".env"
-            if env_file.exists():
-                load_dotenv(env_file)
-                if ctx.obj['verbose']:
-                    click.echo(f"Loaded environment from: {env_file}")
-        except ImportError:
-            # If python-dotenv is not installed, try to load manually
-            project_root = Path(__file__).parent.parent
-            env_file = project_root / ".env"
-            if env_file.exists():
-                with open(env_file, 'r') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith('#') and '=' in line:
-                            key, value = line.split('=', 1)
-                            os.environ[key.strip()] = value.strip()
-        
         sys.path.insert(0, str(Path(__file__).parent.parent / "server"))
         from utils import get_supabase_client
         
@@ -252,28 +234,7 @@ def stats(ctx):
         click.echo("Gathering database statistics...")
     
     try:
-        import os
         from pathlib import Path
-        
-        # Load environment variables from .env file
-        try:
-            from dotenv import load_dotenv
-            project_root = Path(__file__).parent.parent
-            env_file = project_root / ".env"
-            if env_file.exists():
-                load_dotenv(env_file)
-        except ImportError:
-            # If python-dotenv is not installed, try to load manually
-            project_root = Path(__file__).parent.parent
-            env_file = project_root / ".env"
-            if env_file.exists():
-                with open(env_file, 'r') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith('#') and '=' in line:
-                            key, value = line.split('=', 1)
-                            os.environ[key.strip()] = value.strip()
-        
         sys.path.insert(0, str(Path(__file__).parent.parent / "server"))
         from utils import get_supabase_client
         
@@ -335,28 +296,7 @@ def list_all(ctx, table: str, limit: int):
         click.echo(f"Listing records from {table} table(s)...")
     
     try:
-        import os
         from pathlib import Path
-        
-        # Load environment variables from .env file
-        try:
-            from dotenv import load_dotenv
-            project_root = Path(__file__).parent.parent
-            env_file = project_root / ".env"
-            if env_file.exists():
-                load_dotenv(env_file)
-        except ImportError:
-            # If python-dotenv is not installed, try to load manually
-            project_root = Path(__file__).parent.parent
-            env_file = project_root / ".env"
-            if env_file.exists():
-                with open(env_file, 'r') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith('#') and '=' in line:
-                            key, value = line.split('=', 1)
-                            os.environ[key.strip()] = value.strip()
-        
         sys.path.insert(0, str(Path(__file__).parent.parent / "server"))
         from utils import get_supabase_client
         
