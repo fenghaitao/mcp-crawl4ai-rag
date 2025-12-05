@@ -1,16 +1,21 @@
-<h1 align="center">Crawl4AI RAG MCP Server</h1>
+<h1 align="center">Simics RAG & Knowledge Graph CLI</h1>
 
 <p align="center">
-  <em>Web Crawling and RAG Capabilities for AI Agents and AI Coding Assistants</em>
+  <em>Unified CLI for Simics Documentation Processing, RAG Operations, and Knowledge Graph Management</em>
 </p>
 
-A powerful implementation of the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) integrated with [Crawl4AI](https://crawl4ai.com) and [Supabase](https://supabase.com/) for providing AI agents and AI coding assistants with advanced web crawling and RAG capabilities.
+A comprehensive system that combines advanced documentation processing, RAG (Retrieval-Augmented Generation) capabilities, and knowledge graph functionality specifically designed for Simics development workflows.
 
-With this MCP server, you can <b>scrape anything</b> and then <b>use that knowledge anywhere</b> for RAG.
+**🚀 New Repository Structure:**
+- **`core/`**: Core CLI functionality and utilities (previously `scripts/`)
+- **`server/`**: MCP server components and user manual processing (previously `src/`)
+- **`__main__.py`**: Unified CLI entry point for all operations
 
-The primary goal is to bring this MCP server into [Archon](https://github.com/coleam00/Archon) as I evolve it to be more of a knowledge engine for AI coding assistants to build AI agents. This first version of the Crawl4AI/RAG MCP server will be improved upon greatly soon, especially making it more configurable so you can use different embedding models and run everything locally with Ollama.
-
-Consider this GitHub repository a testbed, hence why I haven't been super actively address issues and pull requests yet. I certainly will though as I bring this into Archon V2!
+This system provides a **unified command-line interface** that integrates:
+- **RAG pipeline operations** (crawling, chunking, querying)
+- **Knowledge graph management** (DML parsing, relationship mapping)
+- **MCP server capabilities** for AI agent integration
+- **Database operations** and development utilities
 
 ## Overview
 
@@ -25,9 +30,33 @@ The server includes several advanced RAG strategies that can be enabled to enhan
 
 See the [Configuration section](#configuration) below for details on how to enable and configure these strategies.
 
+## Quick Start
+
+**Run the unified CLI:**
+```bash
+# Main entry point
+python __main__.py --help
+
+# RAG operations
+python __main__.py rag crawl --source simics
+python __main__.py rag query "your question here"
+
+# Knowledge graph operations (planned)
+python __main__.py kg info
+python __main__.py kg ingest-dml /path/to/device.dml
+
+# Database operations
+python __main__.py db migrate
+python __main__.py db reset
+
+# Development utilities
+python __main__.py dev debug-embeddings
+python __main__.py status
+```
+
 ## Vision
 
-The Crawl4AI RAG MCP server is just the beginning. Here's where we're headed:
+The Simics RAG & Knowledge Graph CLI represents a unified approach to documentation processing and code analysis. Here's where we're headed:
 
 1. **Integration with Archon**: Building this system directly into [Archon](https://github.com/coleam00/Archon) to create a comprehensive knowledge engine for AI coding assistants to build better AI agents.
 
@@ -417,7 +446,11 @@ docker run --env-file .env -p 8051:8051 mcp/crawl4ai-rag
 ### Using Python
 
 ```bash
-uv run src/crawl4ai_mcp.py
+# Run the MCP server directly
+uv run server/crawl4ai_mcp.py
+
+# Or use the unified CLI
+python __main__.py --help
 ```
 
 The server will start and listen on the configured host and port.
@@ -575,7 +608,7 @@ Add this server to your MCP configuration for Claude Desktop, Windsurf, or any o
   "mcpServers": {
     "crawl4ai-rag": {
       "command": "python",
-      "args": ["path/to/crawl4ai-mcp/src/crawl4ai_mcp.py"],
+      "args": ["path/to/crawl4ai-mcp/server/crawl4ai_mcp.py"],
       "env": {
         "TRANSPORT": "stdio",
         "OPENAI_API_KEY": "your_openai_api_key",
@@ -716,19 +749,19 @@ For more detailed parameter documentation, see `SMART_CRAWL_GUIDE.md`.
 
 After crawling content into your database, you can test and verify your RAG system using the included query script.
 
-### Quick RAG Testing with `scripts/query_rag.py`
+### Quick RAG Testing with the Unified CLI
 
-The `query_rag.py` script provides a command-line interface to test your RAG database and ensure everything is working correctly:
+The unified CLI provides a streamlined interface to test your RAG database and ensure everything is working correctly:
 
 ```bash
 # Basic search to test your setup
-python scripts/query_rag.py "your search query here"
+python __main__.py rag query "your search query here"
 
-# List all available sources in your database
-python scripts/query_rag.py --list-sources
+# Test with specific options (via legacy scripts)
+python core/query_rag.py "device implementation" --source-type python --count 5 --verbose
 
-# Search with specific filtering
-python scripts/query_rag.py "device implementation" --source-type python --count 5 --verbose
+# List all available sources
+python core/query_rag.py --list-sources
 ```
 
 **Key Testing Scenarios:**
