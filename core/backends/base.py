@@ -54,3 +54,8 @@ class DatabaseBackend(ABC):
     def drop_schema(self, table_names: List[str]) -> bool:
         """Drop tables/collections from the database."""
         pass
+    
+    @abstractmethod
+    def get_schema_info(self) -> Dict[str, Dict[str, Any]]:
+        """Get dynamic schema information from the database."""
+        pass

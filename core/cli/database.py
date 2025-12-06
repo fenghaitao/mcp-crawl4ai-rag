@@ -49,27 +49,40 @@ def info(ctx):
         config_info = backend.get_config_info()
         format_table_output(config_info, "\n📊 Configuration")
         
-        # Data statistics
+        # Data statistics with dynamic schema discovery
         if backend.is_connected():
-            collections = backend.list_collections()
-            click.echo(f"\n📋 Collections/Tables ({len(collections)}):")
+            # Get dynamic schema information
+            schema_info = backend.get_schema_info()
             
-            if backend.get_backend_name() == 'supabase':
-                # Show table info for Supabase
-                for table in collections:
-                    count = stats.get('tables', {}).get(table, 'Unknown')
-                    click.echo(f"  - {table}: {count} records")
+            if schema_info:
+                click.echo(f"\n📋 Collections/Tables ({len(schema_info)}):")
+                
+                # Show each table/collection with dynamic info
+                for table_name, info in schema_info.items():
+                    record_count = info.get('record_count', 'Unknown')
+                    table_type = 'documents' if info.get('type') == 'collection' else 'records'
+                    click.echo(f"  - {table_name}: {record_count} {table_type}")
                 
                 click.echo("\n📚 Schema Information:")
-                click.echo("  - sources: Source metadata and summaries")
-                click.echo("  - crawled_pages: Chunked documentation with embeddings")
-                click.echo("  - code_examples: Code snippets with summaries")
-            
-            elif backend.get_backend_name() == 'chroma':
-                # Show collection info for ChromaDB
-                for collection in collections:
-                    count = stats.get('collections', {}).get(collection, 'Unknown')
-                    click.echo(f"  - {collection}: {count} documents")
+                for table_name, info in schema_info.items():
+                    description = info.get('description', f'{info.get("type", "table").title()}: {table_name}')
+                    click.echo(f"  - {table_name}: {description}")
+            else:
+                # Fallback if dynamic discovery fails
+                collections = backend.list_collections()
+                click.echo(f"\n📋 Collections/Tables ({len(collections)}):")
+                
+                if backend.get_backend_name() == 'supabase':
+                    for table in collections:
+                        count = stats.get('tables', {}).get(table, 'Unknown')
+                        click.echo(f"  - {table}: {count} records")
+                elif backend.get_backend_name() == 'chroma':
+                    for collection in collections:
+                        count = stats.get('collections', {}).get(collection, 'Unknown')
+                        click.echo(f"  - {collection}: {count} documents")
+                
+                click.echo("\n📚 Schema Information:")
+                click.echo("  (Dynamic schema discovery failed - using fallback)")
         
         else:
             click.echo("❌ Cannot retrieve data statistics - connection failed")

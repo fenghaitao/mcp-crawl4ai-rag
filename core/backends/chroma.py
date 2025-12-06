@@ -145,3 +145,49 @@ class ChromaBackend(DatabaseBackend):
                 success = False
         
         return success
+    
+    def get_schema_info(self) -> Dict[str, Dict[str, Any]]:
+        """Get dynamic schema information from ChromaDB."""
+        if not self.is_connected():
+            return {}
+        
+        schema_info = {}
+        
+        try:
+            # List all collections and get their info
+            collections = self._client.list_collections()
+            
+            for collection in collections:
+                try:
+                    # Get collection info
+                    col_obj = self._client.get_collection(collection.name)
+                    count = col_obj.count()
+                    
+                    schema_info[collection.name] = {
+                        'description': self._get_collection_description(collection.name),
+                        'record_count': count,
+                        'type': 'collection'
+                    }
+                    
+                except Exception as e:
+                    schema_info[collection.name] = {
+                        'description': self._get_collection_description(collection.name),
+                        'record_count': 'Error',
+                        'type': 'collection'
+                    }
+                    
+        except Exception as e:
+            print(f"Error getting ChromaDB schema info: {e}")
+        
+        return schema_info
+    
+    def _get_collection_description(self, collection_name: str) -> str:
+        """Get description for ChromaDB collections."""
+        descriptions = {
+            'sources': 'Source metadata and summaries',
+            'crawled_pages': 'Chunked documentation with embeddings',
+            'code_examples': 'Code snippets with summaries',
+            'files': 'Individual files with content hashing and metadata',
+            'content_chunks': 'File-based text chunks with embeddings'
+        }
+        return descriptions.get(collection_name, f'Collection: {collection_name}')

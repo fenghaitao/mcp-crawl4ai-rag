@@ -49,9 +49,8 @@ The system supports three content types:
 ## Usage
 
 Apply schema files in order:
-1. Ensure base `sources` table exists
-2. Apply `001_files_table.sql`
-3. Apply `002_content_chunks.sql`
+1. Apply `001_files_table.sql` (requires existing `sources` table)
+2. Apply `002_content_chunks.sql`
 
 **Note**: These are clean schema files without migration support. Apply to a fresh database or after clearing existing tables.
 
