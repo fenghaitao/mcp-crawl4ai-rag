@@ -60,3 +60,59 @@ class DatabaseBackend(ABC):
     def get_schema_info(self) -> Dict[str, Dict[str, Any]]:
         """Get dynamic schema information from the database."""
         pass
+    
+    # Document Ingest Interface Methods
+    @abstractmethod
+    def check_file_exists(self, file_path: str, content_hash: str) -> Optional[Dict[str, Any]]:
+        """
+        Check if file already exists in database with same hash.
+        
+        Returns:
+            Dict with file info if exists, None otherwise
+        """
+        pass
+    
+    @abstractmethod
+    def remove_file_data(self, file_path: str) -> bool:
+        """
+        Remove existing file and its chunks from database.
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        pass
+    
+    @abstractmethod
+    def store_file_record(self, file_path: str, content_hash: str, file_size: int, content_type: str = 'documentation') -> str:
+        """
+        Store file record in database.
+        
+        Returns:
+            File ID
+        """
+        pass
+    
+    @abstractmethod
+    def store_chunks(self, file_id: str, chunks: List[Any], file_path: str) -> Dict[str, int]:
+        """
+        Store content chunks in database.
+        
+        Args:
+            file_id: File identifier
+            chunks: List of processed chunks
+            file_path: Original file path
+            
+        Returns:
+            Dict with statistics (chunks count, words count)
+        """
+        pass
+    
+    @abstractmethod
+    def update_file_statistics(self, file_id: str, chunk_count: int, word_count: int) -> bool:
+        """
+        Update file record with processing statistics.
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        pass

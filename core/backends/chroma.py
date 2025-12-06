@@ -4,7 +4,7 @@ ChromaDB backend implementation.
 
 import os
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from .base import DatabaseBackend
 
@@ -216,3 +216,159 @@ class ChromaBackend(DatabaseBackend):
         except Exception as e:
             print(f"Error querying {table_name}: {e}")
             return []
+    
+    # Document Ingest Interface Implementation
+    def check_file_exists(self, file_path: str, content_hash: str) -> Optional[Dict[str, Any]]:
+        """Check if file already exists in database with same hash."""
+        try:
+            files_collection = self._client.get_collection('files')
+            results = files_collection.get(
+                where={"$and": [{"file_path": file_path}, {"content_hash": content_hash}]}
+            )
+            if results['ids']:
+                return {
+                    'id': results['ids'][0],
+                    'file_path': results['metadatas'][0]['file_path'],
+                    'content_hash': results['metadatas'][0]['content_hash'],
+                    'chunk_count': results['metadatas'][0].get('chunk_count', 0),
+                    'word_count': results['metadatas'][0].get('word_count', 0)
+                }
+            return None
+        except Exception:
+            return None
+    
+    def remove_file_data(self, file_path: str) -> bool:
+        """Remove existing file and its chunks from database."""
+        try:
+            # Get file record first
+            files_collection = self._client.get_collection('files')
+            file_results = files_collection.get(
+                where={"file_path": file_path}
+            )
+            
+            if file_results['ids']:
+                file_id = file_results['ids'][0]
+                
+                # Remove chunks first
+                try:
+                    chunks_collection = self._client.get_collection('content_chunks')
+                    chunk_results = chunks_collection.get(
+                        where={"file_id": file_id}
+                    )
+                    if chunk_results['ids']:
+                        chunks_collection.delete(ids=chunk_results['ids'])
+                except Exception:
+                    pass  # Collection might not exist or have no chunks
+                
+                # Remove file record
+                files_collection.delete(ids=[file_id])
+            
+            return True
+        except Exception:
+            return False
+    
+    def store_file_record(self, file_path: str, content_hash: str, file_size: int, content_type: str = 'documentation') -> str:
+        """Store file record and return file ID."""
+        import hashlib
+        
+        files_collection = self._client.get_or_create_collection('files')
+        
+        # Generate unique file ID
+        file_id = f"file_{hashlib.md5(file_path.encode()).hexdigest()[:16]}"
+        
+        file_metadata = {
+            'file_path': file_path,
+            'content_hash': content_hash,
+            'file_size': file_size,
+            'content_type': content_type,
+            'word_count': 0,
+            'chunk_count': 0
+        }
+        
+        files_collection.add(
+            ids=[file_id],
+            documents=[file_path],  # Use file path as document content
+            metadatas=[file_metadata]
+        )
+        return file_id
+    
+    def store_chunks(self, file_id: str, chunks: List[Any], file_path: str) -> Dict[str, int]:
+        """Store chunks in database and return statistics."""
+        chunks_collection = self._client.get_or_create_collection('content_chunks')
+        
+        chunk_ids = []
+        chunk_documents = []
+        chunk_metadatas = []
+        chunk_embeddings = []
+        total_words = 0
+        
+        for i, chunk in enumerate(chunks):
+            chunk_id = f"{file_id}_chunk_{i}"
+            chunk_ids.append(chunk_id)
+            chunk_documents.append(chunk.content)
+            
+            # Prepare metadata
+            metadata = {
+                'file_id': file_id,
+                'url': file_path,
+                'chunk_number': i,
+                'content_type': 'documentation',
+                'title': chunk.metadata.heading_hierarchy[-1] if chunk.metadata.heading_hierarchy else '',
+                'section': ' > '.join(chunk.metadata.heading_hierarchy),
+                'word_count': chunk.metadata.char_count // 5,  # Rough word count estimate  
+                'has_code': chunk.metadata.contains_code
+            }
+            chunk_metadatas.append(metadata)
+            
+            # Add embedding if available
+            if chunk.embedding is not None:
+                # Convert numpy array to list if needed
+                embedding = chunk.embedding
+                if hasattr(embedding, 'tolist'):
+                    embedding = embedding.tolist()
+                chunk_embeddings.append(embedding)
+            
+            total_words += getattr(chunk.metadata, 'word_count', 0)
+        
+        total_chunks = len(chunks)
+        
+        # Add chunks to collection
+        if chunk_ids:
+            if chunk_embeddings and len(chunk_embeddings) == len(chunk_ids):
+                chunks_collection.add(
+                    ids=chunk_ids,
+                    documents=chunk_documents,
+                    metadatas=chunk_metadatas,
+                    embeddings=chunk_embeddings
+                )
+            else:
+                chunks_collection.add(
+                    ids=chunk_ids,
+                    documents=chunk_documents,
+                    metadatas=chunk_metadatas
+                )
+        
+        return {'chunks': total_chunks, 'words': total_words}
+    
+    def update_file_statistics(self, file_id: str, chunk_count: int, word_count: int) -> bool:
+        """Update file record with processing statistics."""
+        try:
+            files_collection = self._client.get_collection('files')
+            
+            # Get current file metadata
+            current_file = files_collection.get(ids=[file_id])
+            if not current_file['ids']:
+                return False
+            
+            # Update metadata
+            current_metadata = current_file['metadatas'][0]
+            current_metadata['word_count'] = word_count
+            current_metadata['chunk_count'] = chunk_count
+            
+            files_collection.update(
+                ids=[file_id],
+                metadatas=[current_metadata]
+            )
+            return True
+        except Exception:
+            return False

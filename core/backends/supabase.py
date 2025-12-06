@@ -5,7 +5,7 @@ Supabase database backend implementation.
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from .base import DatabaseBackend
 
@@ -351,3 +351,91 @@ class SupabaseBackend(DatabaseBackend):
             'content_chunks': 'File-based text chunks with embeddings (new RAG system)'
         }
         return descriptions.get(table_name, f'Table: {table_name}')
+    
+    # Document Ingest Interface Implementation
+    def check_file_exists(self, file_path: str, content_hash: str) -> Optional[Dict[str, Any]]:
+        """Check if file already exists in database with same hash."""
+        try:
+            result = self._client.table('files').select('*').eq('file_path', file_path).eq('content_hash', content_hash).execute()
+            if result.data:
+                return result.data[0]
+            return None
+        except Exception:
+            return None
+    
+    def remove_file_data(self, file_path: str) -> bool:
+        """Remove existing file and its chunks from database."""
+        try:
+            # Get file record
+            file_result = self._client.table('files').select('id').eq('file_path', file_path).execute()
+            if file_result.data:
+                file_id = file_result.data[0]['id']
+                
+                # Delete content_chunks first (foreign key constraint)
+                self._client.table('content_chunks').delete().eq('file_id', file_id).execute()
+                
+                # Delete file record
+                self._client.table('files').delete().eq('id', file_id).execute()
+            return True
+        except Exception:
+            return False
+    
+    def store_file_record(self, file_path: str, content_hash: str, file_size: int, content_type: str = 'documentation') -> str:
+        """Store file record and return file ID."""
+        file_data = {
+            'file_path': file_path,
+            'content_hash': content_hash,
+            'file_size': file_size,
+            'content_type': content_type,
+            'word_count': 0,
+            'chunk_count': 0
+        }
+        result = self._client.table('files').insert(file_data).execute()
+        return result.data[0]['id']
+    
+    def store_chunks(self, file_id: str, chunks: List[Any], file_path: str) -> Dict[str, int]:
+        """Store chunks in database and return statistics."""
+        total_chunks = 0
+        total_words = 0
+        chunk_records = []
+        
+        for i, chunk in enumerate(chunks):
+            # Convert ProcessedChunk to database record
+            chunk_data = {
+                'file_id': file_id,
+                'url': file_path,
+                'chunk_number': i,
+                'content': chunk.content,
+                'content_type': 'documentation',
+                'metadata': {
+                    'title': chunk.metadata.heading_hierarchy[-1] if chunk.metadata.heading_hierarchy else '',
+                    'section': ' > '.join(chunk.metadata.heading_hierarchy),
+                    'heading_hierarchy': chunk.metadata.heading_hierarchy,
+                    'word_count': chunk.metadata.char_count // 5,  # Rough word count estimate
+                    'has_code': chunk.metadata.contains_code,
+                    'language_hints': chunk.metadata.code_languages
+                },
+                'embedding': chunk.embedding if chunk.embedding else None
+            }
+            
+            chunk_records.append(chunk_data)
+            total_words += getattr(chunk.metadata, 'word_count', 0)
+        
+        total_chunks = len(chunk_records)
+        
+        # Batch insert chunks
+        if chunk_records:
+            self._client.table('content_chunks').insert(chunk_records).execute()
+        
+        return {'chunks': total_chunks, 'words': total_words}
+    
+    def update_file_statistics(self, file_id: str, chunk_count: int, word_count: int) -> bool:
+        """Update file record with processing statistics."""
+        try:
+            self._client.table('files').update({
+                'word_count': word_count,
+                'chunk_count': chunk_count
+            }).eq('id', file_id).execute()
+            return True
+        except Exception:
+            return False
