@@ -12,14 +12,8 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-try:
-    from ..user_manual_chunker import UserManualChunker
-    from ..user_manual_chunker.config import ChunkerConfig
-    HAS_REAL_CHUNKER = True
-except ImportError:
-    # Fallback to mock chunker for testing
-    from .mock_chunker import MockChunker
-    HAS_REAL_CHUNKER = False
+from ..user_manual_chunker import UserManualChunker
+from ..user_manual_chunker.config import ChunkerConfig
 
 
 class DocumentIngestService:
@@ -33,11 +27,8 @@ class DocumentIngestService:
     def _get_chunker(self):
         """Get or create chunker instance."""
         if self._chunker is None:
-            if HAS_REAL_CHUNKER:
-                config = ChunkerConfig.from_env()
-                self._chunker = UserManualChunker.from_config(config)
-            else:
-                self._chunker = MockChunker()
+            config = ChunkerConfig.from_env()
+            self._chunker = UserManualChunker.from_config(config)
         return self._chunker
     
     def _calculate_file_hash(self, file_path: str) -> str:
@@ -161,12 +152,12 @@ class DocumentIngestService:
                         'content': chunk.content,
                         'content_type': 'documentation',
                         'metadata': {
-                            'title': getattr(chunk.metadata, 'title', ''),
-                            'section': getattr(chunk.metadata, 'section', ''),
-                            'heading_hierarchy': getattr(chunk.metadata, 'heading_hierarchy', []),
-                            'word_count': getattr(chunk.metadata, 'word_count', 0),
-                            'has_code': getattr(chunk.metadata, 'has_code', False),
-                            'language_hints': getattr(chunk.metadata, 'language_hints', [])
+                            'title': chunk.metadata.heading_hierarchy[-1] if chunk.metadata.heading_hierarchy else '',
+                            'section': ' > '.join(chunk.metadata.heading_hierarchy),
+                            'heading_hierarchy': chunk.metadata.heading_hierarchy,
+                            'word_count': chunk.metadata.char_count // 5,  # Rough word count estimate
+                            'has_code': chunk.metadata.contains_code,
+                            'language_hints': chunk.metadata.code_languages
                         },
                         'embedding': chunk.embedding if chunk.embedding else None
                     }
@@ -206,16 +197,20 @@ class DocumentIngestService:
                         'url': file_path,
                         'chunk_number': i,
                         'content_type': 'documentation',
-                        'title': getattr(chunk.metadata, 'title', ''),
-                        'section': getattr(chunk.metadata, 'section', ''),
-                        'word_count': getattr(chunk.metadata, 'word_count', 0),
-                        'has_code': getattr(chunk.metadata, 'has_code', False)
+                        'title': chunk.metadata.heading_hierarchy[-1] if chunk.metadata.heading_hierarchy else '',
+                        'section': ' > '.join(chunk.metadata.heading_hierarchy),
+                        'word_count': chunk.metadata.char_count // 5,  # Rough word count estimate  
+                        'has_code': chunk.metadata.contains_code
                     }
                     chunk_metadatas.append(metadata)
                     
                     # Add embedding if available
-                    if chunk.embedding:
-                        chunk_embeddings.append(chunk.embedding)
+                    if chunk.embedding is not None:
+                        # Convert numpy array to list if needed
+                        embedding = chunk.embedding
+                        if hasattr(embedding, 'tolist'):
+                            embedding = embedding.tolist()
+                        chunk_embeddings.append(embedding)
                     
                     total_words += getattr(chunk.metadata, 'word_count', 0)
                 

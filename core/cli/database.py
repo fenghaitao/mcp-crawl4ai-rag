@@ -137,12 +137,15 @@ def stats(ctx):
 @click.option('--table', '-t', type=click.Choice(['sources', 'crawled_pages', 'code_examples', 'files', 'content_chunks', 'all']), 
               default='all', help='Specify which table/collection to list')
 @click.option('--limit', '-l', type=int, default=10, help='Number of records to display')
+@click.option('--full-content', '-f', is_flag=True, help='Show full content instead of truncated preview')
+@click.option('--order-by', '-o', type=click.Choice(['id', 'file_id', 'chunk_number', 'word_count']),
+              default='id', help='Order records by field')
 @click.pass_context
 @handle_cli_errors
-def list_all(ctx, table: str, limit: int):
-    """List all records from database tables/collections."""
+def list_all(ctx, table: str, limit: int, full_content: bool, order_by: str):
+    """List data from all collections/tables with ordering and full content options."""
     backend_name = ctx.obj.get('db_backend')
-    verbose_echo(ctx, f"Listing records from {table} table(s)...")
+    verbose_echo(ctx, f"Listing data from {backend_name or 'default backend'}...")
     
     try:
         backend = get_backend(backend_name)

@@ -25,7 +25,7 @@ from collections import deque
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Import the flexible embedding functions from utils
-from utils import create_embeddings_batch, create_embedding
+from server.utils import create_embeddings_batch, create_embedding
 from .interfaces import DocumentChunk
 from .data_models import ProcessedChunk
 
