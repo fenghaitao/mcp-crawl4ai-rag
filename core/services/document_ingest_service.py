@@ -10,9 +10,13 @@ import sys
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional
+from dotenv import load_dotenv
 
 from ..user_manual_chunker import UserManualChunker
 from ..user_manual_chunker.config import ChunkerConfig
+
+# Load environment variables
+load_dotenv()
 
 
 class DocumentIngestService:
@@ -115,10 +119,14 @@ class DocumentIngestService:
             
             # Process document with UserManualChunker
             chunker = self._get_chunker()
+            
+            # Read settings from environment
+            generate_summaries = os.getenv("MANUAL_GENERATE_SUMMARIES", "true").lower() == "true"
+            
             chunks = chunker.process_document(
                 file_path,
                 generate_embeddings=True,
-                generate_summaries=False  # Keep it simple for now
+                generate_summaries=generate_summaries
             )
             
             # Store chunks in database
