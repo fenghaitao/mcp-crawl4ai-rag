@@ -249,7 +249,8 @@ def list_all(ctx, table: str, limit: int, full_content: bool, order_by: str):
                                     metadata = result['metadatas'][i]
                                     for key, value in metadata.items():
                                         click.echo(f"  {key}: {value}")
-                                if result['documents'] and i < len(result['documents']):
+                                # Only show content for non-file collections
+                                if table_name != 'files' and result['documents'] and i < len(result['documents']):
                                     doc = result['documents'][i]
                                     if full_content:
                                         click.echo(f"  Content: {doc}")
