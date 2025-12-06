@@ -149,12 +149,21 @@ def ingest_doc(ctx, file_path: str, force: bool):
         
         # Display results
         if result['success']:
-            click.echo("✅ Documentation file ingestion completed successfully!")
-            click.echo(f"📊 Results:")
-            click.echo(f"  - File ID: {result['file_id']}")
-            click.echo(f"  - Chunks created: {result['chunks_created']}")
-            click.echo(f"  - Word count: {result['word_count']}")
-            click.echo(f"  - Processing time: {result['processing_time']:.2f}s")
+            if result.get('skipped', False):
+                click.echo("⏭️  File already exists in database - skipped!")
+                click.echo(f"📊 Existing file details:")
+                click.echo(f"  - File ID: {result['file_id']}")
+                click.echo(f"  - Chunks: {result['chunks_created']}")
+                click.echo(f"  - Word count: {result['word_count']}")
+                click.echo(f"  - Reason: {result.get('reason', 'File unchanged')}")
+                click.echo(f"  - Check time: {result['processing_time']:.2f}s")
+            else:
+                click.echo("✅ Documentation file ingestion completed successfully!")
+                click.echo(f"📊 Results:")
+                click.echo(f"  - File ID: {result['file_id']}")
+                click.echo(f"  - Chunks created: {result['chunks_created']}")
+                click.echo(f"  - Word count: {result['word_count']}")
+                click.echo(f"  - Processing time: {result['processing_time']:.2f}s")
         else:
             click.echo(f"❌ Ingestion failed: {result['error']}", err=True)
             raise Exception(result['error'])
