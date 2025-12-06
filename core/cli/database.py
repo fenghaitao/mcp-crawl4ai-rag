@@ -9,6 +9,7 @@ This module provides commands for database operations including:
 
 import click
 from typing import Optional
+from pathlib import Path
 
 from .utils import handle_cli_errors, verbose_echo, format_table_output, confirm_destructive_action
 
@@ -118,7 +119,7 @@ def stats(ctx):
 
 
 @db.command()
-@click.option('--table', '-t', type=click.Choice(['sources', 'crawled_pages', 'code_examples', 'all']), 
+@click.option('--table', '-t', type=click.Choice(['sources', 'crawled_pages', 'code_examples', 'files', 'content_chunks', 'all']), 
               default='all', help='Specify which table/collection to list')
 @click.option('--limit', '-l', type=int, default=10, help='Number of records to display')
 @click.pass_context
@@ -284,6 +285,161 @@ def delete(ctx, table: Optional[str], force: bool):
     
     except Exception as e:
         click.echo(f"❌ Error during deletion: {e}", err=True)
+        raise
+
+
+@db.command()
+@click.option('--schema-dir', '-d', type=click.Path(exists=True), 
+              default='database/schema', help='Directory containing schema files')
+@click.option('--force', '-f', is_flag=True, help='Skip confirmation prompt')
+@click.pass_context
+@handle_cli_errors
+def apply_schema(ctx, schema_dir: str, force: bool):
+    """Apply database schema files to the current backend."""
+    backend_name = ctx.obj.get('db_backend')
+    verbose_echo(ctx, f"Applying schema to {backend_name or 'default backend'}...")
+    
+    try:
+        backend = get_backend(backend_name)
+        
+        if not backend.is_connected():
+            click.echo("❌ Database not connected", err=True)
+            return
+        
+        # Find schema files
+        schema_path = Path(schema_dir)
+        sql_files = sorted(schema_path.glob('*.sql'))
+        
+        if not sql_files:
+            click.echo(f"❌ No SQL files found in {schema_dir}", err=True)
+            return
+        
+        # Show files to be applied
+        click.echo(f"🗄️ Applying schema to {backend.get_backend_name().upper()}")
+        click.echo("=" * 40)
+        click.echo(f"Schema directory: {schema_dir}")
+        click.echo(f"Files to apply:")
+        for sql_file in sql_files:
+            click.echo(f"  - {sql_file.name}")
+        
+        # Confirmation
+        if not force:
+            if not confirm_destructive_action("apply schema files", f"{len(sql_files)} files"):
+                click.echo("❌ Operation cancelled")
+                return
+        
+        # Apply schemas based on backend
+        click.echo(f"\n🚀 Applying schema to {backend.get_backend_name()}...")
+        
+        if backend.get_backend_name() == 'supabase':
+            click.echo("📋 Executing SQL files in Supabase...")
+            success = backend.apply_schema([str(f) for f in sql_files])
+            
+        elif backend.get_backend_name() == 'chroma':
+            click.echo("📋 Setting up ChromaDB collections...")
+            success = backend.apply_schema([str(f) for f in sql_files])
+            
+        else:
+            click.echo(f"❌ Schema application not supported for {backend.get_backend_name()}")
+            return
+        
+        if success:
+            click.echo("✅ Schema application completed successfully!")
+            click.echo("\n📊 Updated backend information:")
+            
+            # Show updated stats
+            stats = backend.get_stats()
+            if backend.get_backend_name() == 'supabase':
+                tables = stats.get('tables', {})
+                for table, count in tables.items():
+                    click.echo(f"  - {table}: {count} records")
+            elif backend.get_backend_name() == 'chroma':
+                collections = stats.get('collections', {})
+                for collection, count in collections.items():
+                    click.echo(f"  - {collection}: {count} documents")
+        else:
+            click.echo("❌ Some schema files failed to apply. Check the output above for details.")
+            raise Exception("Schema application failed")
+            
+    except Exception as e:
+        click.echo(f"❌ Error applying schema: {e}", err=True)
+        raise
+
+
+@db.command()
+@click.option('--tables', '-t', help='Comma-separated list of tables to drop (if not specified, drops schema tables)')
+@click.option('--force', '-f', is_flag=True, help='Skip confirmation prompt')
+@click.pass_context
+@handle_cli_errors
+def drop_schema(ctx, tables: Optional[str], force: bool):
+    """Drop database schema tables/collections."""
+    backend_name = ctx.obj.get('db_backend')
+    verbose_echo(ctx, f"Dropping schema from {backend_name or 'default backend'}...")
+    
+    try:
+        backend = get_backend(backend_name)
+        
+        if not backend.is_connected():
+            click.echo("❌ Database not connected", err=True)
+            return
+        
+        # Determine tables to drop
+        if tables:
+            table_list = [t.strip() for t in tables.split(',')]
+        else:
+            # Default schema tables (in reverse order for dependencies)
+            table_list = ['content_chunks', 'files']
+        
+        # Show tables to be dropped
+        click.echo(f"🗄️ Dropping schema from {backend.get_backend_name().upper()}")
+        click.echo("=" * 40)
+        click.echo(f"Tables/Collections to drop:")
+        for table in table_list:
+            click.echo(f"  - {table}")
+        
+        # Confirmation
+        if not force:
+            click.echo(f"\n⚠️  WARNING: This will permanently delete the schema structure!")
+            click.echo(f"⚠️  All data and structure will be lost for these tables.")
+            if not confirm_destructive_action("drop schema", f"{len(table_list)} tables"):
+                click.echo("❌ Operation cancelled")
+                return
+        
+        # Drop schema
+        click.echo(f"\n🗑️ Dropping schema from {backend.get_backend_name()}...")
+        
+        if backend.get_backend_name() == 'supabase':
+            click.echo("📋 Dropping tables from Supabase...")
+            success = backend.drop_schema(table_list)
+            
+        elif backend.get_backend_name() == 'chroma':
+            click.echo("📋 Dropping collections from ChromaDB...")
+            success = backend.drop_schema(table_list)
+            
+        else:
+            click.echo(f"❌ Schema dropping not supported for {backend.get_backend_name()}")
+            return
+        
+        if success:
+            click.echo("✅ Schema dropping completed successfully!")
+            click.echo("\n📊 Updated backend information:")
+            
+            # Show updated stats
+            stats = backend.get_stats()
+            if backend.get_backend_name() == 'supabase':
+                tables = stats.get('tables', {})
+                for table, count in tables.items():
+                    click.echo(f"  - {table}: {count} records")
+            elif backend.get_backend_name() == 'chroma':
+                collections = stats.get('collections', {})
+                for collection, count in collections.items():
+                    click.echo(f"  - {collection}: {count} documents")
+        else:
+            click.echo("❌ Some tables failed to drop. Check the output above for details.")
+            raise Exception("Schema dropping failed")
+            
+    except Exception as e:
+        click.echo(f"❌ Error dropping schema: {e}", err=True)
         raise
 
 

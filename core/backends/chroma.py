@@ -96,3 +96,52 @@ class ChromaBackend(DatabaseBackend):
             'Path Exists': '✅ Yes' if Path(self._chroma_path).exists() else '❌ No',
             'Connection': '✅ Active' if self.is_connected() else '❌ Failed'
         }
+    
+    def apply_schema(self, schema_files: List[str]) -> bool:
+        """Apply schema files to ChromaDB (creates collections based on schema)."""
+        if not self.is_connected():
+            raise ConnectionError("Not connected to ChromaDB")
+        
+        # For ChromaDB, we don't apply SQL schemas directly
+        # Instead, we ensure the basic collections exist
+        try:
+            # Create default collections if they don't exist
+            collection_names = ['files', 'content_chunks']
+            
+            for collection_name in collection_names:
+                try:
+                    # Try to get the collection first
+                    collection = self._client.get_collection(collection_name)
+                    print(f"✅ Collection '{collection_name}' already exists")
+                except Exception:
+                    # Collection doesn't exist, create it
+                    try:
+                        collection = self._client.create_collection(
+                            name=collection_name,
+                            metadata={"hnsw:space": "cosine"}
+                        )
+                        print(f"✅ Created collection '{collection_name}'")
+                    except Exception as create_error:
+                        print(f"❌ Error creating collection '{collection_name}': {create_error}")
+                        return False
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error setting up ChromaDB collections: {e}")
+            return False
+    
+    def drop_schema(self, table_names: List[str]) -> bool:
+        """Drop collections from ChromaDB."""
+        if not self.is_connected():
+            raise ConnectionError("Not connected to ChromaDB")
+        
+        success = True
+        for collection_name in table_names:
+            try:
+                self._client.delete_collection(collection_name)
+            except Exception as e:
+                print(f"Error dropping collection {collection_name}: {e}")
+                success = False
+        
+        return success

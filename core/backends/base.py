@@ -4,6 +4,7 @@ Abstract base classes for database backends.
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
+from pathlib import Path
 
 
 class DatabaseBackend(ABC):
@@ -42,4 +43,14 @@ class DatabaseBackend(ABC):
     @abstractmethod
     def get_config_info(self) -> Dict[str, str]:
         """Get configuration information for display."""
+        pass
+    
+    @abstractmethod
+    def apply_schema(self, schema_files: List[str]) -> bool:
+        """Apply schema files to the database."""
+        pass
+    
+    @abstractmethod
+    def drop_schema(self, table_names: List[str]) -> bool:
+        """Drop tables/collections from the database."""
         pass
