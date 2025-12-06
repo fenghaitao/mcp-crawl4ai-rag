@@ -308,6 +308,7 @@ class ChromaBackend(DatabaseBackend):
             chunk_documents.append(chunk.content)
             
             # Prepare metadata
+            word_count = chunk.metadata.char_count // 5  # Rough word count estimate
             metadata = {
                 'file_id': file_id,
                 'url': file_path,
@@ -315,7 +316,7 @@ class ChromaBackend(DatabaseBackend):
                 'content_type': 'documentation',
                 'title': chunk.metadata.heading_hierarchy[-1] if chunk.metadata.heading_hierarchy else '',
                 'section': ' > '.join(chunk.metadata.heading_hierarchy),
-                'word_count': chunk.metadata.char_count // 5,  # Rough word count estimate  
+                'word_count': word_count,
                 'has_code': chunk.metadata.contains_code
             }
             chunk_metadatas.append(metadata)
@@ -328,7 +329,7 @@ class ChromaBackend(DatabaseBackend):
                     embedding = embedding.tolist()
                 chunk_embeddings.append(embedding)
             
-            total_words += getattr(chunk.metadata, 'word_count', 0)
+            total_words += word_count
         
         total_chunks = len(chunks)
         

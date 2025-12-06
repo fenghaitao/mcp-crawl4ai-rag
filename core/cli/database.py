@@ -191,7 +191,11 @@ def list_all(ctx, table: str, limit: int, full_content: bool, order_by: str):
                             click.echo(f"  ID: {record['id']}")
                             click.echo(f"  URL: {record.get('url', 'N/A')}")
                             click.echo(f"  Chunk: {record.get('chunk_number', 'N/A')}")
-                            content_preview = record.get('content', 'N/A')[:100] + "..." if record.get('content') else 'N/A'
+                            content = record.get('content', 'N/A')
+                            if full_content:
+                                content_preview = content if content else 'N/A'
+                            else:
+                                content_preview = content[:100] + "..." if content and content != 'N/A' else 'N/A'
                             click.echo(f"  Content: {content_preview}")
                             click.echo(f"  Source ID: {record.get('source_id', 'N/A')}")
                             click.echo(f"  Created: {record.get('created_at', 'N/A')}")
@@ -207,10 +211,16 @@ def list_all(ctx, table: str, limit: int, full_content: bool, order_by: str):
                             click.echo(f"  ID: {record['id']}")
                             click.echo(f"  URL: {record.get('url', 'N/A')}")
                             click.echo(f"  Chunk: {record.get('chunk_number', 'N/A')}")
-                            content_preview = record.get('content', 'N/A')[:100] + "..." if record.get('content') else 'N/A'
+                            content = record.get('content', 'N/A')
+                            if full_content:
+                                content_preview = content if content else 'N/A'
+                            else:
+                                content_preview = content[:100] + "..." if content and content != 'N/A' else 'N/A'
                             click.echo(f"  Content: {content_preview}")
                             summary = record.get('summary', 'N/A')
-                            if summary and summary != 'N/A':
+                            if full_content:
+                                summary_preview = summary if summary else 'N/A'
+                            elif summary and summary != 'N/A':
                                 summary_preview = summary[:100] + "..." if len(summary) > 100 else summary
                             else:
                                 summary_preview = 'N/A'
@@ -241,7 +251,10 @@ def list_all(ctx, table: str, limit: int, full_content: bool, order_by: str):
                                         click.echo(f"  {key}: {value}")
                                 if result['documents'] and i < len(result['documents']):
                                     doc = result['documents'][i]
-                                    click.echo(f"  Content: {doc[:100]}...")
+                                    if full_content:
+                                        click.echo(f"  Content: {doc}")
+                                    else:
+                                        click.echo(f"  Content: {doc[:100]}...")
                                 click.echo()
                         else:
                             click.echo(f"  📭 No documents found in {table_name}")

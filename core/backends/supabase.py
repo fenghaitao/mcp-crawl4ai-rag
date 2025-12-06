@@ -401,6 +401,7 @@ class SupabaseBackend(DatabaseBackend):
         
         for i, chunk in enumerate(chunks):
             # Convert ProcessedChunk to database record
+            word_count = chunk.metadata.char_count // 5  # Rough word count estimate
             chunk_data = {
                 'file_id': file_id,
                 'url': file_path,
@@ -411,7 +412,7 @@ class SupabaseBackend(DatabaseBackend):
                     'title': chunk.metadata.heading_hierarchy[-1] if chunk.metadata.heading_hierarchy else '',
                     'section': ' > '.join(chunk.metadata.heading_hierarchy),
                     'heading_hierarchy': chunk.metadata.heading_hierarchy,
-                    'word_count': chunk.metadata.char_count // 5,  # Rough word count estimate
+                    'word_count': word_count,
                     'has_code': chunk.metadata.contains_code,
                     'language_hints': chunk.metadata.code_languages
                 },
@@ -419,7 +420,7 @@ class SupabaseBackend(DatabaseBackend):
             }
             
             chunk_records.append(chunk_data)
-            total_words += getattr(chunk.metadata, 'word_count', 0)
+            total_words += word_count
         
         total_chunks = len(chunk_records)
         
