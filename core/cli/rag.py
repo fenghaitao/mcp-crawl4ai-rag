@@ -124,27 +124,40 @@ def ingest_python_test(ctx, file_path: str, force: bool):
 @handle_cli_errors
 def ingest_doc(ctx, file_path: str, force: bool):
     """Ingest a documentation file into the RAG system."""
+    from ..backends.factory import get_backend
+    from ..services.document_ingest_service import DocumentIngestService
+    
     verbose_echo(ctx, "Ingesting documentation file...")
     
     click.echo(f"📄 Documentation file: {file_path}")
     click.echo(f"🔄 Force re-processing: {'Yes' if force else 'No'}")
     
     try:
-        if force:
-            click.echo("🗑️ Force mode: Removing existing data for this file...")
-            # TODO: Egest/remove existing data for this specific file from database
+        # Get backend
+        backend_name = ctx.obj.get('db_backend')
+        backend = get_backend(backend_name)
         
-        click.echo("🚀 Starting documentation file ingestion...")
-        click.echo("📝 Processing documentation content...")
-        click.echo("✂️ Chunking text segments...")
-        click.echo("🧠 Generating embeddings...")
-        click.echo("💾 Storing in database...")
+        if not backend.is_connected():
+            click.echo("❌ Database not connected", err=True)
+            return
         
-        # TODO: Integrate with documentation processing logic
-        # This should integrate with user_manual_chunker for documentation
-        # Process markdown, HTML, text, and other documentation formats
+        # Create document ingest service
+        service = DocumentIngestService(backend)
         
-        click.echo("✅ Documentation file ingestion completed successfully!")
+        # Process the document
+        result = service.ingest_document(file_path, force_reprocess=force)
+        
+        # Display results
+        if result['success']:
+            click.echo("✅ Documentation file ingestion completed successfully!")
+            click.echo(f"📊 Results:")
+            click.echo(f"  - File ID: {result['file_id']}")
+            click.echo(f"  - Chunks created: {result['chunks_created']}")
+            click.echo(f"  - Word count: {result['word_count']}")
+            click.echo(f"  - Processing time: {result['processing_time']:.2f}s")
+        else:
+            click.echo(f"❌ Ingestion failed: {result['error']}", err=True)
+            raise Exception(result['error'])
         
     except Exception as e:
         click.echo(f"❌ Error during documentation ingestion: {e}", err=True)
