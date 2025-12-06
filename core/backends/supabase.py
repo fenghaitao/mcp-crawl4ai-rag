@@ -408,12 +408,13 @@ class SupabaseBackend(DatabaseBackend):
                 'chunk_number': i,
                 'content': chunk.content,
                 'content_type': 'documentation',
+                'summary': chunk.summary if chunk.summary else None,
                 'metadata': {
                     'title': chunk.metadata.heading_hierarchy[-1] if chunk.metadata.heading_hierarchy else '',
                     'section': ' > '.join(chunk.metadata.heading_hierarchy),
-                    'heading_hierarchy': chunk.metadata.heading_hierarchy,
                     'word_count': word_count,
                     'has_code': chunk.metadata.contains_code,
+                    'heading_hierarchy': chunk.metadata.heading_hierarchy,
                     'language_hints': chunk.metadata.code_languages
                 },
                 'embedding': chunk.embedding if chunk.embedding else None

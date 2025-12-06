@@ -8,14 +8,13 @@ CREATE TABLE content_chunks (
     chunk_number INTEGER NOT NULL,                     -- Sequential number of this chunk within the file
     content TEXT NOT NULL,                             -- The actual text content of the chunk
     content_type VARCHAR(50) NOT NULL,                 -- 'code_dml', 'python_test', 'documentation'
-    metadata JSONB NOT NULL DEFAULT '{}'::JSONB,       -- Additional metadata as JSON
-    source_id TEXT NOT NULL,                           -- Reference to sources table
+    summary TEXT,                                      -- LLM-generated summary (optional)
+    metadata JSONB NOT NULL DEFAULT '{}'::JSONB,       -- Additional metadata (title, section, word_count, has_code, AST info, etc.)
     embedding vector(1536),                            -- Vector embedding for semantic search
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     
     -- Constraints
     FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
-    FOREIGN KEY (source_id) REFERENCES sources(source_id) ON DELETE CASCADE,
     UNIQUE(file_id, chunk_number),                     -- Prevent duplicate chunks per file
     CHECK (chunk_number >= 0),
     CHECK (content_type IN ('code_dml', 'python_test', 'documentation'))
@@ -23,9 +22,9 @@ CREATE TABLE content_chunks (
 
 -- Indexes for performance
 CREATE INDEX idx_content_chunks_file_id ON content_chunks(file_id);
-CREATE INDEX idx_content_chunks_source_id ON content_chunks(source_id);
 CREATE INDEX idx_content_chunks_content_type ON content_chunks(content_type);
 CREATE INDEX idx_content_chunks_created_at ON content_chunks(created_at);
+CREATE INDEX idx_content_chunks_has_code ON content_chunks((metadata->>'has_code')) WHERE (metadata->>'has_code')::boolean = TRUE;
 
 -- Partial indexes for type-specific queries
 CREATE INDEX idx_content_chunks_code_dml ON content_chunks(file_id, chunk_number) WHERE content_type = 'code_dml';
@@ -37,9 +36,10 @@ CREATE INDEX idx_content_chunks_embedding ON content_chunks USING ivfflat (embed
 WITH (lists = 100);
 
 -- Comments
-COMMENT ON TABLE content_chunks IS 'New file-based text chunks with embeddings for RAG operations';
+COMMENT ON TABLE content_chunks IS 'File-based text chunks with embeddings for RAG operations';
 COMMENT ON COLUMN content_chunks.file_id IS 'Reference to the source file in files table';
 COMMENT ON COLUMN content_chunks.chunk_number IS 'Sequential number of this chunk within the file';
 COMMENT ON COLUMN content_chunks.content_type IS 'Type of content: code_dml, python_test, or documentation';
-COMMENT ON COLUMN content_chunks.metadata IS 'Additional metadata stored as JSONB';
+COMMENT ON COLUMN content_chunks.summary IS 'LLM-generated summary (optional, NULL if not generated)';
+COMMENT ON COLUMN content_chunks.metadata IS 'Additional metadata stored as JSONB (title, section, word_count, has_code, heading_hierarchy, language_hints, AST info, etc.)';
 COMMENT ON COLUMN content_chunks.embedding IS 'Vector embedding for semantic similarity search';

@@ -240,7 +240,8 @@ def list_all(ctx, table: str, limit: int, full_content: bool, order_by: str):
                     
                     if table_name in backend.list_collections():
                         collection = client.get_collection(table_name)
-                        result = collection.peek(limit=limit)
+                        # Get with embeddings to show embedding status
+                        result = collection.get(limit=limit, include=['embeddings', 'metadatas', 'documents'])
                         
                         if result['ids']:
                             for i, doc_id in enumerate(result['ids']):
@@ -248,14 +249,33 @@ def list_all(ctx, table: str, limit: int, full_content: bool, order_by: str):
                                 if result['metadatas'] and i < len(result['metadatas']):
                                     metadata = result['metadatas'][i]
                                     for key, value in metadata.items():
-                                        click.echo(f"  {key}: {value}")
+                                        # Show summary preview unless full_content is requested
+                                        if key == 'summary' and value and not full_content:
+                                            click.echo(f"  {key}: {value[:80]}..." if len(str(value)) > 80 else f"  {key}: {value}")
+                                        else:
+                                            click.echo(f"  {key}: {value}")
+                                # Show embedding status
+                                if result.get('embeddings') is not None:
+                                    try:
+                                        emb = result['embeddings'][i] if i < len(result['embeddings']) else None
+                                        if emb is not None:
+                                            try:
+                                                emb_dim = len(emb)
+                                                click.echo(f"  has_embedding: True (dim={emb_dim})")
+                                            except:
+                                                click.echo(f"  has_embedding: True")
+                                        else:
+                                            click.echo(f"  has_embedding: False")
+                                    except (IndexError, TypeError):
+                                        pass
                                 # Only show content for non-file collections
-                                if table_name != 'files' and result['documents'] and i < len(result['documents']):
-                                    doc = result['documents'][i]
-                                    if full_content:
-                                        click.echo(f"  Content: {doc}")
-                                    else:
-                                        click.echo(f"  Content: {doc[:100]}...")
+                                if table_name != 'files':
+                                    if result.get('documents') and i < len(result['documents']):
+                                        doc = result['documents'][i]
+                                        if full_content:
+                                            click.echo(f"  Content: {doc}")
+                                        else:
+                                            click.echo(f"  Content: {doc[:100]}...")
                                 click.echo()
                         else:
                             click.echo(f"  📭 No documents found in {table_name}")
@@ -263,7 +283,10 @@ def list_all(ctx, table: str, limit: int, full_content: bool, order_by: str):
                         click.echo(f"  ❌ Collection {table_name} does not exist")
                         
             except Exception as e:
+                import traceback
                 click.echo(f"  ❌ Error querying {table_name}: {e}")
+                if ctx.obj.get('verbose'):
+                    click.echo(traceback.format_exc())
         
         if table == 'all':
             collections = backend.list_collections()

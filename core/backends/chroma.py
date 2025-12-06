@@ -314,10 +314,13 @@ class ChromaBackend(DatabaseBackend):
                 'url': file_path,
                 'chunk_number': i,
                 'content_type': 'documentation',
+                'summary': chunk.summary if chunk.summary else '',
                 'title': chunk.metadata.heading_hierarchy[-1] if chunk.metadata.heading_hierarchy else '',
                 'section': ' > '.join(chunk.metadata.heading_hierarchy),
                 'word_count': word_count,
-                'has_code': chunk.metadata.contains_code
+                'has_code': chunk.metadata.contains_code,
+                'heading_hierarchy': chunk.metadata.heading_hierarchy,
+                'language_hints': chunk.metadata.code_languages
             }
             chunk_metadatas.append(metadata)
             
