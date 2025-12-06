@@ -297,7 +297,7 @@ async def add_source_files_to_supabase(processed_files: List[Dict[str, Any]], si
         from crawl4ai_mcp import smart_chunk_source
         
         # Import summarization functions
-        from code_summarizer import generate_file_summary, generate_chunk_summary
+        from .code_summarizer import generate_file_summary, generate_chunk_summary
         
         client = get_supabase_client()
         use_summarization = os.getenv("USE_CODE_SUMMARIZATION", "true").lower() == "true"

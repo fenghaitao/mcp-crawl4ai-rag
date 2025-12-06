@@ -144,7 +144,7 @@ class SummaryGenerator:
         """
         # Try to use code_summarizer's documentation summary function
         try:
-            from src.code_summarizer import generate_documentation_summary
+            from ..code_summarizer import generate_documentation_summary
             
             # Call with timeout
             with timeout_context(self.timeout):

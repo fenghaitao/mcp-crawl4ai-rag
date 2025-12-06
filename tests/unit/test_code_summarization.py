@@ -9,7 +9,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
-from code_summarizer import generate_file_summary, generate_chunk_summary
+from core.code_summarizer import generate_file_summary, generate_chunk_summary
 from dashscope_client import test_dashscope_connection
 
 

@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 from iflow_client import test_iflow_connection
-from code_summarizer import generate_file_summary, generate_chunk_summary
+from core.code_summarizer import generate_file_summary, generate_chunk_summary
 
 
 def test_iflow_api():

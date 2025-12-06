@@ -21,7 +21,7 @@ def test_imports():
     print("Testing imports...")
     
     try:
-        from src.code_summarizer import generate_documentation_summary
+        from core.code_summarizer import generate_documentation_summary
         print("✅ code_summarizer.generate_documentation_summary")
     except ImportError as e:
         print(f"❌ Failed to import generate_documentation_summary: {e}")
@@ -56,7 +56,7 @@ def test_code_summarizer_signature():
     print("\nTesting code_summarizer signature...")
     
     try:
-        from src.code_summarizer import generate_documentation_summary
+        from core.code_summarizer import generate_documentation_summary
         import inspect
         
         sig = inspect.signature(generate_documentation_summary)

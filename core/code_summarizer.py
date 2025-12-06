@@ -7,13 +7,14 @@ import sys
 from pathlib import Path
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent))
+# Add parent path for server imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
-    from iflow_client import create_chat_completion_iflow
+    from server.iflow_client import create_chat_completion_iflow
 except ImportError:
-    from src.iflow_client import create_chat_completion_iflow
+    # Fallback for different execution contexts
+    from iflow_client import create_chat_completion_iflow
 
 if TYPE_CHECKING:
     from user_manual_chunker.interfaces import DocumentChunk
