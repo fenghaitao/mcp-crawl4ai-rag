@@ -8,8 +8,9 @@ This module provides commands for database operations including:
 """
 
 import click
-from typing import Optional
+from typing import Optional, List
 from pathlib import Path
+import re
 
 from .utils import handle_cli_errors, verbose_echo, format_table_output, confirm_destructive_action
 
@@ -379,12 +380,81 @@ def apply_schema(ctx, schema_dir: str, force: bool):
         raise
 
 
+def get_schema_tables_from_files(schema_dir: str) -> List[str]:
+    """Extract table names from schema SQL files in reverse dependency order."""
+    schema_path = Path(schema_dir)
+    if not schema_path.exists():
+        return []
+    
+    schema_files = sorted(schema_path.glob('*.sql'))
+    table_names = []
+    
+    for schema_file in schema_files:
+        try:
+            with open(schema_file, 'r') as f:
+                content = f.read()
+                # Extract CREATE TABLE statements (handle IF NOT EXISTS)
+                tables = re.findall(r'CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(\w+)', content, re.IGNORECASE)
+                table_names.extend(tables)
+        except Exception as e:
+            click.echo(f"⚠️  Warning: Could not parse {schema_file.name}: {e}")
+    
+    # Return in reverse order for proper dependency handling
+    return list(reversed(table_names))
+
+
+def get_tables_from_database(backend) -> List[str]:
+    """Get actual tables that exist in the database."""
+    if not backend.is_connected():
+        return []
+    
+    try:
+        # Get schema info which includes actual tables
+        schema_info = backend.get_schema_info()
+        if schema_info:
+            # Return tables in reverse order for dependency handling
+            return list(reversed(list(schema_info.keys())))
+        else:
+            # Fallback to backend's list_collections
+            collections = backend.list_collections()
+            return list(reversed(collections))
+    except Exception as e:
+        click.echo(f"⚠️  Warning: Could not get tables from database: {e}")
+        return []
+
+
+def get_discovered_tables(backend, schema_dir: str) -> tuple[List[str], List[str], List[str]]:
+    """Get tables from both schema files and database, return (all_tables, file_tables, db_tables)."""
+    file_tables = get_schema_tables_from_files(schema_dir)
+    db_tables = get_tables_from_database(backend)
+    
+    # Combine and deduplicate while preserving order
+    seen = set()
+    all_tables = []
+    
+    # Add database tables first (they exist)
+    for table in db_tables:
+        if table not in seen:
+            all_tables.append(table)
+            seen.add(table)
+    
+    # Add any schema file tables not already seen
+    for table in file_tables:
+        if table not in seen:
+            all_tables.append(table)
+            seen.add(table)
+    
+    return all_tables, file_tables, db_tables
+
+
 @db.command()
-@click.option('--tables', '-t', help='Comma-separated list of tables to drop (if not specified, drops schema tables)')
+@click.option('--tables', '-t', help='Comma-separated list of tables to drop (if not specified, discovers from schema files)')
+@click.option('--schema-dir', '-d', type=click.Path(exists=True), 
+              default='database/schema', help='Directory containing schema files')
 @click.option('--force', '-f', is_flag=True, help='Skip confirmation prompt')
 @click.pass_context
 @handle_cli_errors
-def drop_schema(ctx, tables: Optional[str], force: bool):
+def drop_schema(ctx, tables: Optional[str], schema_dir: str, force: bool):
     """Drop database schema tables/collections."""
     backend_name = ctx.obj.get('db_backend')
     verbose_echo(ctx, f"Dropping schema from {backend_name or 'default backend'}...")
@@ -400,8 +470,75 @@ def drop_schema(ctx, tables: Optional[str], force: bool):
         if tables:
             table_list = [t.strip() for t in tables.split(',')]
         else:
-            # Default schema tables (in reverse order for dependencies)
-            table_list = ['content_chunks', 'files']
+            # Dynamic discovery from both schema files and database
+            all_tables, file_tables, db_tables = get_discovered_tables(backend, schema_dir)
+            
+            if not all_tables:
+                click.echo(f"❌ No tables discovered from database or {schema_dir}", err=True)
+                click.echo("💡 Use --tables option to specify tables manually")
+                return
+            
+            # Show discovery results
+            click.echo(f"🔍 Table Discovery Results:")
+            click.echo(f"  📁 From schema files ({schema_dir}): {len(file_tables)} tables")
+            for table in file_tables:
+                click.echo(f"     - {table}")
+            
+            click.echo(f"  🗄️ From database: {len(db_tables)} tables")
+            for table in db_tables:
+                click.echo(f"     - {table}")
+            
+            click.echo(f"\n📋 All discovered tables (in drop order):")
+            for i, table in enumerate(all_tables, 1):
+                source = "📁" if table in file_tables and table in db_tables else "📁" if table in file_tables else "🗄️"
+                click.echo(f"  {i}. {table} {source}")
+            
+            if not force:
+                # Let user select tables to drop
+                click.echo(f"\n🎯 Found {len(all_tables)} total tables.")
+                choice = click.prompt(
+                    "Select option:\n"
+                    "  [a] Drop all discovered tables\n"
+                    "  [d] Drop only database tables (safe - preserves schema capability)\n"
+                    "  [s] Select specific tables\n" 
+                    "  [c] Cancel operation\n"
+                    "Choice", 
+                    type=click.Choice(['a', 'd', 's', 'c']),
+                    default='c'
+                )
+                
+                if choice == 'c':
+                    click.echo("❌ Operation cancelled")
+                    return
+                elif choice == 'a':
+                    table_list = all_tables
+                elif choice == 'd':
+                    table_list = db_tables
+                elif choice == 's':
+                    # Allow user to select specific tables
+                    click.echo("\n🎯 Select tables to drop (comma-separated numbers):")
+                    for i, table in enumerate(all_tables, 1):
+                        source = "📁" if table in file_tables and table in db_tables else "📁" if table in file_tables else "🗄️"
+                        click.echo(f"  {i}. {table} {source}")
+                    
+                    selection = click.prompt(
+                        f"Enter numbers (1-{len(all_tables)}) separated by commas",
+                        type=str
+                    )
+                    
+                    try:
+                        indices = [int(x.strip()) - 1 for x in selection.split(',')]
+                        table_list = [all_tables[i] for i in indices if 0 <= i < len(all_tables)]
+                        
+                        if not table_list:
+                            click.echo("❌ No valid tables selected")
+                            return
+                    except (ValueError, IndexError):
+                        click.echo("❌ Invalid selection format")
+                        return
+            else:
+                # Force mode - drop all discovered tables
+                table_list = all_tables
         
         # Show tables to be dropped
         click.echo(f"🗄️ Dropping schema from {backend.get_backend_name().upper()}")
