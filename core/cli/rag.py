@@ -261,18 +261,9 @@ def egest_doc(ctx, file_path: str, confirm: bool):
             click.echo("❌ Database not connected", err=True)
             return
         
-        # Calculate file hash same way as ingest
-        def calculate_file_hash(file_path: str) -> str:
-            """Calculate SHA256 hash of file content."""
-            import hashlib
-            hasher = hashlib.sha256()
-            with open(file_path, 'rb') as f:
-                for chunk in iter(lambda: f.read(4096), b""):
-                    hasher.update(chunk)
-            return hasher.hexdigest()
-        
         # Check if file exists in database with current hash
         try:
+            from .utils import calculate_file_hash
             file_hash = calculate_file_hash(file_path)
             existing = backend.check_file_exists(file_path, file_hash)
         except FileNotFoundError:

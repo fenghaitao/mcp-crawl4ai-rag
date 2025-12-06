@@ -133,3 +133,29 @@ def confirm_destructive_action(action_name: str, target: Optional[str] = None) -
     """
     target_text = f" from {target}" if target else ""
     return click.confirm(f"⚠️  Are you sure you want to {action_name}{target_text}?")
+
+
+def calculate_file_hash(file_path: str) -> str:
+    """
+    Calculate SHA256 hash of file content.
+    
+    This is the standard hash function used throughout the system
+    for file content verification and duplicate detection.
+    
+    Args:
+        file_path: Path to the file to hash
+        
+    Returns:
+        SHA256 hash as hexadecimal string
+        
+    Raises:
+        FileNotFoundError: If file doesn't exist
+        PermissionError: If file cannot be read
+    """
+    import hashlib
+    
+    hasher = hashlib.sha256()
+    with open(file_path, 'rb') as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()

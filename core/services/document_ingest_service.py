@@ -7,7 +7,6 @@ chunk_user_manuals.py and integrates it with our backend architecture.
 
 import os
 import sys
-import hashlib
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -33,11 +32,8 @@ class DocumentIngestService:
     
     def _calculate_file_hash(self, file_path: str) -> str:
         """Calculate SHA256 hash of file content."""
-        hasher = hashlib.sha256()
-        with open(file_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                hasher.update(chunk)
-        return hasher.hexdigest()
+        from ..cli.utils import calculate_file_hash
+        return calculate_file_hash(file_path)
     
     def _get_file_stats(self, file_path: str) -> Dict[str, Any]:
         """Get file statistics."""
