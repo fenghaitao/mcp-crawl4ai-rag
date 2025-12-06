@@ -261,20 +261,42 @@ def egest_doc(ctx, file_path: str, confirm: bool):
             click.echo("❌ Database not connected", err=True)
             return
         
-        # Check if file exists in database first
-        file_hash = None  # We don't have the hash, but we can check by path
-        existing = backend.check_file_exists(file_path, "dummy_hash")
+        # Calculate file hash same way as ingest
+        def calculate_file_hash(file_path: str) -> str:
+            """Calculate SHA256 hash of file content."""
+            import hashlib
+            hasher = hashlib.sha256()
+            with open(file_path, 'rb') as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hasher.update(chunk)
+            return hasher.hexdigest()
+        
+        # Check if file exists in database with current hash
+        try:
+            file_hash = calculate_file_hash(file_path)
+            existing = backend.check_file_exists(file_path, file_hash)
+        except FileNotFoundError:
+            click.echo(f"❌ File not found: {file_path}", err=True)
+            return
+        except Exception as e:
+            click.echo(f"❌ Error reading file: {e}", err=True)
+            return
+        
         if not existing:
-            # Try checking just by path (need to modify backend interface or use different approach)
-            # For now, let's try to remove anyway and see if it succeeds
-            pass
+            click.echo(f"⚠️  File not found in database:")
+            click.echo(f"   - Path: {file_path}")
+            click.echo(f"   - Current hash: {file_hash[:16]}...")
+            click.echo(f"   - File may have been modified or never ingested")
+            return
         
         # Confirmation prompt unless --confirm flag is used
         if not confirm:
             click.echo(f"⚠️  This will permanently remove:")
             click.echo(f"   - File record: {file_path}")
-            click.echo(f"   - All associated chunks and embeddings")
-            click.echo(f"   - All metadata and processing history")
+            click.echo(f"   - File ID: {existing['id']}")
+            click.echo(f"   - {existing['chunk_count']} chunks and embeddings")
+            click.echo(f"   - {existing['word_count']} words of processed content")
+            click.echo(f"   - Content hash: {file_hash[:16]}...")
             
             if not click.confirm("Are you sure you want to proceed?"):
                 click.echo("❌ Operation cancelled")
