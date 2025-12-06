@@ -191,3 +191,28 @@ class ChromaBackend(DatabaseBackend):
             'content_chunks': 'File-based text chunks with embeddings'
         }
         return descriptions.get(collection_name, f'Collection: {collection_name}')
+    
+    def list_all_data(self, table_name: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """List data from a specific collection."""
+        if not self.is_connected():
+            return []
+        
+        try:
+            collection = self._client.get_collection(table_name)
+            result = collection.get(limit=limit)
+            
+            # Convert ChromaDB format to list of dictionaries
+            data = []
+            for i, doc_id in enumerate(result['ids']):
+                item = {
+                    'id': doc_id,
+                    'document': result['documents'][i] if i < len(result['documents']) else '',
+                    'metadata': result['metadatas'][i] if i < len(result['metadatas']) else {}
+                }
+                data.append(item)
+            
+            return data
+            
+        except Exception as e:
+            print(f"Error querying {table_name}: {e}")
+            return []

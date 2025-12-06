@@ -111,7 +111,6 @@ class DocumentIngestService:
                     'content_hash': content_hash,
                     'file_size': stats['size'],
                     'content_type': 'documentation',
-                    'source_id': 'user_documentation',
                     'word_count': 0,
                     'chunk_count': 0
                 }
@@ -129,7 +128,6 @@ class DocumentIngestService:
                     'content_hash': content_hash,
                     'file_size': stats['size'],
                     'content_type': 'documentation',
-                    'source_id': 'user_documentation',
                     'word_count': 0,
                     'chunk_count': 0
                 }
@@ -170,7 +168,6 @@ class DocumentIngestService:
                             'has_code': getattr(chunk.metadata, 'has_code', False),
                             'language_hints': getattr(chunk.metadata, 'language_hints', [])
                         },
-                        'source_id': 'user_documentation',
                         'embedding': chunk.embedding if chunk.embedding else None
                     }
                     
@@ -209,7 +206,6 @@ class DocumentIngestService:
                         'url': file_path,
                         'chunk_number': i,
                         'content_type': 'documentation',
-                        'source_id': 'user_documentation',
                         'title': getattr(chunk.metadata, 'title', ''),
                         'section': getattr(chunk.metadata, 'section', ''),
                         'word_count': getattr(chunk.metadata, 'word_count', 0),
@@ -248,7 +244,6 @@ class DocumentIngestService:
                     metadatas=[{
                         'file_path': file_path,
                         'content_type': 'documentation',
-                        'source_id': 'user_documentation',
                         'word_count': total_words,
                         'chunk_count': total_chunks
                     }]
@@ -262,43 +257,7 @@ class DocumentIngestService:
         except Exception as e:
             raise Exception(f"Failed to store chunks: {e}")
     
-    def _ensure_source_exists(self):
-        """Ensure the user_documentation source exists."""
-        try:
-            if self.backend.get_backend_name() == 'supabase':
-                # Check if source exists
-                result = self.backend._client.table('sources').select('source_id').eq('source_id', 'user_documentation').execute()
-                
-                if not result.data:
-                    # Create source record
-                    source_data = {
-                        'source_id': 'user_documentation',
-                        'summary': 'User-provided documentation files',
-                        'total_word_count': 0
-                    }
-                    self.backend._client.table('sources').insert(source_data).execute()
-            elif self.backend.get_backend_name() == 'chroma':
-                # For ChromaDB, create sources collection if needed
-                try:
-                    sources_collection = self.backend._client.get_or_create_collection('sources')
-                    # Check if source exists
-                    results = sources_collection.get(where={"source_id": "user_documentation"})
-                    if not results['ids']:
-                        # Create source record
-                        sources_collection.add(
-                            ids=['user_documentation'],
-                            documents=['User-provided documentation files'],
-                            metadatas=[{
-                                'source_id': 'user_documentation',
-                                'summary': 'User-provided documentation files',
-                                'total_word_count': 0
-                            }]
-                        )
-                except Exception:
-                    pass
-        except Exception as e:
-            # Non-critical - continue if source creation fails
-            pass
+    # Removed _ensure_source_exists - no longer needed for file-based workflow
     
     def ingest_document(self, file_path: str, force_reprocess: bool = False) -> Dict[str, Any]:
         """
@@ -310,8 +269,7 @@ class DocumentIngestService:
         start_time = time.time()
         
         try:
-            # Ensure source exists
-            self._ensure_source_exists()
+            # No longer need sources for file-based workflow
             
             # Calculate file hash for change detection
             content_hash = self._calculate_file_hash(file_path)

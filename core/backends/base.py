@@ -5,6 +5,7 @@ Abstract base classes for database backends.
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+import os
 
 
 class DatabaseBackend(ABC):
