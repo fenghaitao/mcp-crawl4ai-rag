@@ -14,7 +14,6 @@ from typing import Optional
 from .utils import handle_cli_errors, get_config_value
 from .database import db
 from .rag import rag
-from .dev import dev
 
 # Version information
 __version__ = "1.0.0"
@@ -40,7 +39,6 @@ def cli(ctx, verbose: bool, config: Optional[str]):
 # Register command groups
 cli.add_command(db)
 cli.add_command(rag)
-cli.add_command(dev)
 
 
 @cli.command()

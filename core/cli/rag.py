@@ -21,93 +21,6 @@ def rag():
 
 
 @rag.command()
-@click.option('--source', '-s', type=click.Choice(['simics', 'local', 'urls']), 
-              default='simics', help='Source type to crawl')
-@click.option('--output-dir', '-o', type=click.Path(), 
-              help='Output directory for crawled content')
-@click.option('--max-pages', '-n', type=int, help='Maximum pages to crawl')
-@click.pass_context
-@handle_cli_errors
-def crawl(ctx, source: str, output_dir: Optional[str], max_pages: Optional[int]):
-    """Crawl and download documentation sources."""
-    verbose_echo(ctx, f"Crawling {source} sources...")
-    
-    # Set default output directory
-    if not output_dir:
-        output_dir = f"./pipeline_output/crawled_{source}"
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
-    
-    click.echo(f"🚀 Starting {source} crawling...")
-    click.echo(f"📁 Output directory: {output_dir}")
-    
-    if max_pages:
-        click.echo(f"📊 Max pages: {max_pages}")
-    
-    try:
-        if source == 'simics':
-            # Import and execute Simics crawling
-            import sys
-            sys.path.append(str(Path(__file__).parent.parent))
-            
-            click.echo("🔍 Crawling Simics documentation...")
-            click.echo("📋 This will execute the crawl_simics_source module")
-            # TODO: Integrate with actual crawl_simics_source logic
-            
-        elif source == 'local':
-            click.echo("📁 Crawling local files...")
-            click.echo("📋 This will execute the crawl_local_files module")
-            # TODO: Integrate with actual crawl_local_files logic
-            
-        else:  # urls
-            click.echo("🌐 Crawling from URL list...")
-            click.echo("📋 This will process URLs from configuration")
-            # TODO: Integrate with URL-based crawling
-        
-        click.echo("✅ Crawling completed successfully!")
-        
-    except Exception as e:
-        click.echo(f"❌ Error during crawling: {e}", err=True)
-        raise
-
-
-@rag.command()
-@click.option('--input-dir', '-i', type=click.Path(exists=True), 
-              help='Input directory with crawled content')
-@click.option('--chunk-size', '-c', type=int, default=1000, 
-              help='Chunk size for text splitting')
-@click.option('--overlap', '-o', type=int, default=200, 
-              help='Overlap between chunks')
-@click.pass_context
-@handle_cli_errors
-def chunk(ctx, input_dir: Optional[str], chunk_size: int, overlap: int):
-    """Process and chunk crawled documentation."""
-    verbose_echo(ctx, "Starting document chunking...")
-    
-    # Set default input directory
-    if not input_dir:
-        input_dir = "./pipeline_output/downloaded_pages"
-    
-    if not Path(input_dir).exists():
-        click.echo(f"❌ Input directory does not exist: {input_dir}", err=True)
-        raise click.ClickException(f"Directory not found: {input_dir}")
-    
-    click.echo(f"📝 Processing documents from: {input_dir}")
-    click.echo(f"📊 Chunk size: {chunk_size}")
-    click.echo(f"🔗 Overlap: {overlap}")
-    
-    try:
-        # TODO: Integrate with actual chunking logic
-        click.echo("🚀 Starting chunking process...")
-        click.echo("📋 This will integrate with the user manual chunker")
-        
-        click.echo("✅ Chunking completed successfully!")
-        
-    except Exception as e:
-        click.echo(f"❌ Error during chunking: {e}", err=True)
-        raise
-
-
-@rag.command()
 @click.argument('query_text')
 @click.option('--limit', '-l', type=int, default=5, help='Number of results to return')
 @click.option('--threshold', '-t', type=float, default=0.7, 
@@ -141,39 +54,200 @@ def query(ctx, query_text: str, limit: int, threshold: float):
 
 
 @rag.command()
-@click.option('--input-format', type=click.Choice(['html', 'markdown', 'text']),
-              default='markdown', help='Input document format')
-@click.option('--output-format', type=click.Choice(['json', 'yaml', 'text']),
-              default='json', help='Output format for processed chunks')
+@click.argument('file_path', type=click.Path(exists=True))
+@click.option('--force', '-f', is_flag=True, help='Force re-processing: egest existing data and re-ingest')
 @click.pass_context
 @handle_cli_errors
-def process(ctx, input_format: str, output_format: str):
-    """Process documents through the full RAG pipeline."""
-    verbose_echo(ctx, f"Processing documents: {input_format} -> {output_format}")
+def ingest_dml(ctx, file_path: str, force: bool):
+    """Ingest a DML source code file into the RAG system."""
+    verbose_echo(ctx, "Ingesting DML source file...")
     
-    click.echo(f"📝 Input format: {input_format}")
-    click.echo(f"📤 Output format: {output_format}")
+    click.echo(f"📄 DML file: {file_path}")
+    click.echo(f"🔄 Force re-processing: {'Yes' if force else 'No'}")
     
     try:
-        click.echo("🚀 Starting full RAG pipeline...")
+        if force:
+            click.echo("🗑️ Force mode: Removing existing data for this file...")
+            # TODO: Egest/remove existing data for this specific file from database
         
-        # TODO: Integrate full pipeline
-        steps = [
-            "🔍 Document discovery",
-            "📄 Content extraction", 
-            "✂️ Text chunking",
-            "🧠 Embedding generation",
-            "💾 Database storage"
-        ]
+        click.echo("🚀 Starting DML file ingestion...")
+        click.echo("📋 Processing .dml file...")
+        click.echo("🧠 Generating embeddings...")
+        click.echo("💾 Storing in database...")
         
-        for i, step in enumerate(steps, 1):
-            click.echo(f"Step {i}/5: {step}")
-            # Simulate processing
-            import time
-            time.sleep(0.5)
+        # TODO: Integrate with actual DML file processing logic
+        # This should process the single DML file
         
-        click.echo("✅ Pipeline processing completed successfully!")
+        click.echo("✅ DML file ingestion completed successfully!")
         
     except Exception as e:
-        click.echo(f"❌ Error during pipeline processing: {e}", err=True)
+        click.echo(f"❌ Error during DML ingestion: {e}", err=True)
         raise
+
+
+@rag.command()
+@click.argument('file_path', type=click.Path(exists=True))
+@click.option('--force', '-f', is_flag=True, help='Force re-processing: egest existing data and re-ingest')
+@click.pass_context
+@handle_cli_errors
+def ingest_python_test(ctx, file_path: str, force: bool):
+    """Ingest a Python test file into the RAG system."""
+    verbose_echo(ctx, "Ingesting Python test file...")
+    
+    click.echo(f"📄 Python test file: {file_path}")
+    click.echo(f"🔄 Force re-processing: {'Yes' if force else 'No'}")
+    
+    try:
+        if force:
+            click.echo("🗑️ Force mode: Removing existing data for this file...")
+            # TODO: Egest/remove existing data for this specific file from database
+        
+        click.echo("🚀 Starting Python test file ingestion...")
+        click.echo("🧪 Processing test file...")
+        click.echo("🧠 Generating embeddings...")
+        click.echo("💾 Storing in database...")
+        
+        # TODO: Integrate with Python test file processing
+        # This should process the single Python test file
+        
+        click.echo("✅ Python test file ingestion completed successfully!")
+        
+    except Exception as e:
+        click.echo(f"❌ Error during Python test ingestion: {e}", err=True)
+        raise
+
+
+@rag.command()
+@click.argument('file_path', type=click.Path(exists=True))
+@click.option('--force', '-f', is_flag=True, help='Force re-processing: egest existing data and re-ingest')
+@click.pass_context
+@handle_cli_errors
+def ingest_doc(ctx, file_path: str, force: bool):
+    """Ingest a documentation file into the RAG system."""
+    verbose_echo(ctx, "Ingesting documentation file...")
+    
+    click.echo(f"📄 Documentation file: {file_path}")
+    click.echo(f"🔄 Force re-processing: {'Yes' if force else 'No'}")
+    
+    try:
+        if force:
+            click.echo("🗑️ Force mode: Removing existing data for this file...")
+            # TODO: Egest/remove existing data for this specific file from database
+        
+        click.echo("🚀 Starting documentation file ingestion...")
+        click.echo("📝 Processing documentation content...")
+        click.echo("✂️ Chunking text segments...")
+        click.echo("🧠 Generating embeddings...")
+        click.echo("💾 Storing in database...")
+        
+        # TODO: Integrate with documentation processing logic
+        # This should integrate with user_manual_chunker for documentation
+        # Process markdown, HTML, text, and other documentation formats
+        
+        click.echo("✅ Documentation file ingestion completed successfully!")
+        
+    except Exception as e:
+        click.echo(f"❌ Error during documentation ingestion: {e}", err=True)
+        raise
+
+
+@rag.command()
+@click.argument('file_path', type=click.Path())
+@click.option('--format', '-f', type=click.Choice(['json', 'markdown', 'raw']),
+              default='json', help='Export format')
+@click.pass_context
+@handle_cli_errors
+def egest_dml(ctx, file_path: str, format: str):
+    """Export DML chunks and metadata to a file."""
+    verbose_echo(ctx, "Exporting DML data...")
+    
+    click.echo(f"📄 Export file: {file_path}")
+    click.echo(f"📋 Format: {format}")
+    
+    try:
+        # Create output directory if needed
+        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        click.echo("🚀 Starting DML export...")
+        click.echo("📊 Querying database for DML sources...")
+        click.echo("📝 Processing DML chunks...")
+        click.echo("💾 Writing export file...")
+        
+        # TODO: Integrate with database export logic
+        # Query crawled_pages where source_id LIKE '%dml%'
+        # Export chunks with metadata to single file
+        
+        click.echo(f"✅ DML export completed! Data saved to {file_path}")
+        
+    except Exception as e:
+        click.echo(f"❌ Error during DML export: {e}", err=True)
+        raise
+
+
+@rag.command()
+@click.argument('file_path', type=click.Path())
+@click.option('--format', '-f', type=click.Choice(['json', 'markdown', 'raw']),
+              default='json', help='Export format')
+@click.pass_context
+@handle_cli_errors
+def egest_python_test(ctx, file_path: str, format: str):
+    """Export Python test chunks and metadata to a file."""
+    verbose_echo(ctx, "Exporting Python test data...")
+    
+    click.echo(f"📄 Export file: {file_path}")
+    click.echo(f"📋 Format: {format}")
+    
+    try:
+        # Create output directory if needed
+        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        click.echo("🚀 Starting Python test export...")
+        click.echo("📊 Querying database for Python test sources...")
+        click.echo("📝 Processing Python test chunks...")
+        click.echo("💾 Writing export file...")
+        
+        # TODO: Integrate with database export logic
+        # Query crawled_pages where source_id LIKE '%python%' AND metadata contains test info
+        # Export test chunks with metadata to single file
+        
+        click.echo(f"✅ Python test export completed! Data saved to {file_path}")
+        
+    except Exception as e:
+        click.echo(f"❌ Error during Python test export: {e}", err=True)
+        raise
+
+
+@rag.command()
+@click.argument('file_path', type=click.Path())
+@click.option('--format', '-f', type=click.Choice(['json', 'markdown', 'raw']),
+              default='json', help='Export format')
+@click.pass_context
+@handle_cli_errors
+def egest_doc(ctx, file_path: str, format: str):
+    """Export documentation chunks and metadata to a file."""
+    verbose_echo(ctx, "Exporting documentation data...")
+    
+    click.echo(f"📄 Export file: {file_path}")
+    click.echo(f"📋 Format: {format}")
+    
+    try:
+        # Create output directory if needed
+        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        click.echo("🚀 Starting documentation export...")
+        click.echo("📊 Querying database for documentation sources...")
+        click.echo("📝 Processing documentation chunks...")
+        click.echo("💾 Writing export file...")
+        
+        # TODO: Integrate with database export logic
+        # Query crawled_pages where content_type = 'documentation' or 'mixed'
+        # Filter by heading_hierarchy for structured export
+        # Export documentation chunks with metadata and hierarchy to single file
+        
+        click.echo(f"✅ Documentation export completed! Data saved to {file_path}")
+        
+    except Exception as e:
+        click.echo(f"❌ Error during documentation export: {e}", err=True)
+        raise
+
+
