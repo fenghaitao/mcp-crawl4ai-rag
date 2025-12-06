@@ -1,15 +1,13 @@
 """
-Core functionality for Simics RAG and Knowledge Graph operations.
+Core module for Simics RAG system.
 
-This package contains the main CLI interface and core utilities for:
-- RAG pipeline operations (crawling, chunking, querying)
-- Knowledge graph management (planned)
-- Database operations and migrations
-- Development and debugging tools
-
-The package structure follows the reorganization from the original scripts/
-directory to provide a more organized and maintainable codebase.
+This package provides unified access to all core functionality including
+CLI commands, database operations, and RAG pipeline components.
 """
 
 __version__ = "1.0.0"
-__author__ = "Simics RAG Team"
+
+# Import main CLI for convenience
+from .cli.main import main as cli_main
+
+__all__ = ['cli_main']
