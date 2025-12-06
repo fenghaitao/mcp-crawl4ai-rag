@@ -241,35 +241,61 @@ def egest_python_test(ctx, file_path: str, format: str):
 
 @rag.command()
 @click.argument('file_path', type=click.Path())
-@click.option('--format', '-f', type=click.Choice(['json', 'markdown', 'raw']),
-              default='json', help='Export format')
+@click.option('--confirm', '-c', is_flag=True, help='Skip confirmation prompt')
 @click.pass_context
 @handle_cli_errors
-def egest_doc(ctx, file_path: str, format: str):
-    """Export documentation chunks and metadata to a file."""
-    verbose_echo(ctx, "Exporting documentation data...")
+def egest_doc(ctx, file_path: str, confirm: bool):
+    """Remove a documentation file and its chunks from the database."""
+    from ..backends.factory import get_backend
     
-    click.echo(f"📄 Export file: {file_path}")
-    click.echo(f"📋 Format: {format}")
+    verbose_echo(ctx, "Removing documentation file from database...")
+    
+    click.echo(f"📄 Documentation file: {file_path}")
     
     try:
-        # Create output directory if needed
-        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+        # Get backend
+        backend_name = ctx.obj.get('db_backend')
+        backend = get_backend(backend_name)
         
-        click.echo("🚀 Starting documentation export...")
-        click.echo("📊 Querying database for documentation sources...")
-        click.echo("📝 Processing documentation chunks...")
-        click.echo("💾 Writing export file...")
+        if not backend.is_connected():
+            click.echo("❌ Database not connected", err=True)
+            return
         
-        # TODO: Integrate with database export logic
-        # Query crawled_pages where content_type = 'documentation' or 'mixed'
-        # Filter by heading_hierarchy for structured export
-        # Export documentation chunks with metadata and hierarchy to single file
+        # Check if file exists in database first
+        file_hash = None  # We don't have the hash, but we can check by path
+        existing = backend.check_file_exists(file_path, "dummy_hash")
+        if not existing:
+            # Try checking just by path (need to modify backend interface or use different approach)
+            # For now, let's try to remove anyway and see if it succeeds
+            pass
         
-        click.echo(f"✅ Documentation export completed! Data saved to {file_path}")
+        # Confirmation prompt unless --confirm flag is used
+        if not confirm:
+            click.echo(f"⚠️  This will permanently remove:")
+            click.echo(f"   - File record: {file_path}")
+            click.echo(f"   - All associated chunks and embeddings")
+            click.echo(f"   - All metadata and processing history")
+            
+            if not click.confirm("Are you sure you want to proceed?"):
+                click.echo("❌ Operation cancelled")
+                return
+        
+        click.echo("🗑️  Removing file from database...")
+        
+        # Remove file and its chunks using backend interface
+        success = backend.remove_file_data(file_path)
+        
+        if success:
+            click.echo("✅ Documentation file removed successfully!")
+            click.echo(f"📊 Removed:")
+            click.echo(f"  - File record: {file_path}")
+            click.echo(f"  - All associated chunks")
+            click.echo(f"  - All embeddings and metadata")
+        else:
+            click.echo("⚠️  File not found in database or already removed")
         
     except Exception as e:
-        click.echo(f"❌ Error during documentation export: {e}", err=True)
+        click.echo(f"❌ Error during file removal: {e}", err=True)
         raise
 
 
