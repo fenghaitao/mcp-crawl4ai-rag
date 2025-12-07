@@ -126,23 +126,57 @@ def create_chat_completion_iflow(
     Raises:
         Exception: If API call fails
     """
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # Log invocation details
+    logger.info(f"🤖 iFlow LLM Invocation")
+    logger.info(f"   📋 Model: {model}")
+    logger.info(f"   🌡️  Temperature: {temperature}")
+    logger.info(f"   🎛️  Max tokens: {max_tokens}")
+    logger.info(f"   💬 Message count: {len(messages)}")
+    
+    # Log message preview (truncated for privacy/readability)
+    if messages:
+        first_msg = messages[0]
+        content = first_msg.get('content', '')
+        content_preview = content[:150] + ('...' if len(content) > 150 else '')
+        logger.info(f"   📝 First message ({first_msg.get('role', 'unknown')}): {content_preview}")
+        
+        # Log total content length
+        total_chars = sum(len(msg.get('content', '')) for msg in messages)
+        logger.debug(f"   📏 Total content length: {total_chars} characters")
+
     # Get API key
     api_key = os.getenv("IFLOW_API_KEY")
     if not api_key:
+        logger.error("❌ IFLOW_API_KEY environment variable must be set")
         raise ValueError("IFLOW_API_KEY environment variable must be set")
     api_base = os.getenv("IFLOW_API_BASE", "https://apis.iflow.cn/v1/")
     
     # Convert iflow/ prefix to dashscope/ for LiteLLM
+    original_model = model
     if model.startswith("iflow/"):
         model = model.replace("iflow/", "dashscope/")
     elif not model.startswith("dashscope/"):
         model = "dashscope/" + model
+    
+    if original_model != model:
+        logger.debug(f"   🔄 Model conversion: {original_model} -> {model}")
+    
+    logger.debug(f"   🔗 API Base: {api_base}")
+    api_key_preview = f"{'*' * (len(api_key) - 4)}{api_key[-4:]}" if len(api_key) > 4 else "****"
+    logger.debug(f"   🔑 API Key: {api_key_preview}")
 
     # Get rate limiter and wait if needed
     rate_limiter = get_rate_limiter()
     rate_limiter.wait_if_needed()
 
+    start_time = time.time()
     try:
+        logger.info("🚀 Making iFlow API request via LiteLLM...")
+        
         # Use LiteLLM for the API call
         # LiteLLM automatically handles the DashScope API
         response = litellm.completion(
@@ -155,8 +189,32 @@ def create_chat_completion_iflow(
             **kwargs
         )
         
+        elapsed_time = time.time() - start_time
+        
         # Record successful request
         rate_limiter.record_success()
+        
+        # Extract response details for logging
+        response_content = response.choices[0].message.content if response.choices else ""
+        response_preview = response_content[:150] + ('...' if len(response_content) > 150 else '')
+        
+        usage = response.usage if response.usage else None
+        prompt_tokens = usage.prompt_tokens if usage else 0
+        completion_tokens = usage.completion_tokens if usage else 0
+        total_tokens = usage.total_tokens if usage else 0
+        
+        # Log successful response
+        logger.info(f"✅ iFlow API request successful!")
+        logger.info(f"   ⏱️  Response time: {elapsed_time:.2f}s")
+        logger.info(f"   🏷️  Model used: {response.model}")
+        logger.info(f"   🎯 Tokens - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}")
+        logger.info(f"   📄 Response preview: {response_preview}")
+        logger.info(f"   ✋ Finish reason: {response.choices[0].finish_reason if response.choices else 'unknown'}")
+        
+        # Calculate tokens per second if we have the data
+        if completion_tokens > 0:
+            tokens_per_sec = completion_tokens / elapsed_time
+            logger.debug(f"   📈 Generation speed: {tokens_per_sec:.1f} tokens/second")
         
         # Convert LiteLLM response to dictionary format
         return {
@@ -171,15 +229,22 @@ def create_chat_completion_iflow(
             ],
             "model": response.model,
             "usage": {
-                "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-                "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-                "total_tokens": response.usage.total_tokens if response.usage else 0
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens
             }
         }
         
     except Exception as e:
+        elapsed_time = time.time() - start_time
         # Record error for backoff
         rate_limiter.record_error(e)
+        
+        logger.error(f"❌ iFlow API request failed after {elapsed_time:.2f}s")
+        logger.error(f"   📋 Model: {original_model}")
+        logger.error(f"   🚨 Error type: {type(e).__name__}")
+        logger.error(f"   💥 Error details: {str(e)[:200]}{'...' if len(str(e)) > 200 else ''}")
+        
         raise Exception(f"iFlow API request failed via LiteLLM: {e}")
 
 

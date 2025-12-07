@@ -438,16 +438,56 @@ def create_embeddings_batch_copilot(texts: List[str]) -> List[List[float]]:
     Returns:
         List of embeddings
     """
+    import logging
+    import time
+    
+    logger = logging.getLogger(__name__)
+    start_time = time.time()
+    
+    # Log invocation details
+    logger.info(f"🤖 GitHub Copilot Embeddings Batch")
+    logger.info(f"   📊 Batch size: {len(texts)}")
+    
+    # Log text samples for debugging
+    if texts:
+        sample_length = len(texts[0])
+        logger.info(f"   📏 First text length: {sample_length} characters")
+        if len(texts) > 1:
+            total_chars = sum(len(text) for text in texts)
+            avg_length = total_chars / len(texts)
+            logger.info(f"   📈 Average text length: {avg_length:.0f} characters")
+            logger.debug(f"   📝 First text preview: {texts[0][:100]}{'...' if len(texts[0]) > 100 else ''}")
+    
     async def _create():
         try:
+            logger.info("🚀 Initializing Copilot client...")
             client = await get_copilot_client()
             if client is None:
-                print("Copilot client not available, falling back to zero embeddings")
+                logger.warning("⚠️  Copilot client not available, falling back to zero embeddings")
+                logger.info("   💡 Make sure GITHUB_TOKEN environment variable is set")
                 return [[0.0] * 1536 for _ in texts]
             
-            return await client.create_embeddings_batch(texts)
+            logger.info("✅ Copilot client ready, creating embeddings...")
+            embeddings = await client.create_embeddings_batch(texts)
+            
+            elapsed_time = time.time() - start_time
+            logger.info(f"✅ Copilot batch embeddings successful!")
+            logger.info(f"   ⏱️  Total time: {elapsed_time:.2f}s")
+            logger.info(f"   📊 Embeddings created: {len(embeddings)}")
+            logger.info(f"   📐 Embedding dimension: {len(embeddings[0]) if embeddings else 0}")
+            
+            if len(embeddings) > 0:
+                texts_per_sec = len(embeddings) / elapsed_time
+                logger.debug(f"   📈 Processing speed: {texts_per_sec:.1f} texts/second")
+            
+            return embeddings
+            
         except Exception as e:
-            print(f"Error in Copilot batch embeddings: {e}")
+            elapsed_time = time.time() - start_time
+            logger.error(f"❌ Copilot batch embeddings failed after {elapsed_time:.2f}s")
+            logger.error(f"   📊 Batch size: {len(texts)}")
+            logger.error(f"   🚨 Error: {type(e).__name__}: {str(e)[:200]}{'...' if len(str(e)) > 200 else ''}")
+            logger.info("   🔄 Falling back to zero embeddings")
             return [[0.0] * 1536 for _ in texts]
     
     try:
@@ -456,14 +496,18 @@ def create_embeddings_batch_copilot(texts: List[str]) -> List[List[float]]:
             loop = asyncio.get_running_loop()
             # If we get here, we're in an event loop, so we need to run in a thread
             import concurrent.futures
+            logger.debug("   🔄 Running in existing event loop (using thread executor)")
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, _create())
                 return future.result()
         except RuntimeError:
             # No event loop running, safe to use asyncio.run()
+            logger.debug("   🔄 No event loop detected, using asyncio.run()")
             return asyncio.run(_create())
     except Exception as e:
-        print(f"Error running async Copilot batch embeddings: {e}")
+        elapsed_time = time.time() - start_time
+        logger.error(f"❌ Error running async Copilot batch embeddings after {elapsed_time:.2f}s: {e}")
+        logger.info("   🔄 Falling back to zero embeddings")
         return [[0.0] * 1536 for _ in texts]
 
 
@@ -477,16 +521,46 @@ def create_embedding_copilot(text: str) -> List[float]:
     Returns:
         Embedding as list of floats
     """
+    import logging
+    import time
+    
+    logger = logging.getLogger(__name__)
+    start_time = time.time()
+    
+    # Log invocation details
+    logger.info(f"🤖 GitHub Copilot Single Embedding")
+    logger.info(f"   📏 Text length: {len(text)} characters")
+    logger.debug(f"   📝 Text preview: {text[:100]}{'...' if len(text) > 100 else ''}")
+    
     async def _create():
         try:
+            logger.info("🚀 Initializing Copilot client...")
             client = await get_copilot_client()
             if client is None:
-                print("Copilot client not available, falling back to zero embedding")
+                logger.warning("⚠️  Copilot client not available, falling back to zero embedding")
+                logger.info("   💡 Make sure GITHUB_TOKEN environment variable is set")
                 return [0.0] * 1536
             
-            return await client.create_embedding_single(text)
+            logger.info("✅ Copilot client ready, creating embedding...")
+            embedding = await client.create_embedding_single(text)
+            
+            elapsed_time = time.time() - start_time
+            logger.info(f"✅ Copilot single embedding successful!")
+            logger.info(f"   ⏱️  Response time: {elapsed_time:.2f}s")
+            logger.info(f"   📐 Embedding dimension: {len(embedding)}")
+            
+            # Check for non-zero embedding
+            non_zero_count = sum(1 for x in embedding if x != 0.0)
+            logger.debug(f"   📊 Non-zero values: {non_zero_count}/{len(embedding)}")
+            
+            return embedding
+            
         except Exception as e:
-            print(f"Error in Copilot single embedding: {e}")
+            elapsed_time = time.time() - start_time
+            logger.error(f"❌ Copilot single embedding failed after {elapsed_time:.2f}s")
+            logger.error(f"   📏 Text length: {len(text)}")
+            logger.error(f"   🚨 Error: {type(e).__name__}: {str(e)[:200]}{'...' if len(str(e)) > 200 else ''}")
+            logger.info("   🔄 Falling back to zero embedding")
             return [0.0] * 1536
     
     try:
@@ -495,14 +569,18 @@ def create_embedding_copilot(text: str) -> List[float]:
             loop = asyncio.get_running_loop()
             # If we get here, we're in an event loop, so we need to run in a thread
             import concurrent.futures
+            logger.debug("   🔄 Running in existing event loop (using thread executor)")
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, _create())
                 return future.result()
         except RuntimeError:
             # No event loop running, safe to use asyncio.run()
+            logger.debug("   🔄 No event loop detected, using asyncio.run()")
             return asyncio.run(_create())
     except Exception as e:
-        print(f"Error running async Copilot single embedding: {e}")
+        elapsed_time = time.time() - start_time
+        logger.error(f"❌ Error running async Copilot single embedding after {elapsed_time:.2f}s: {e}")
+        logger.info("   🔄 Falling back to zero embedding")
         return [0.0] * 1536
 
 
@@ -526,21 +604,89 @@ def create_chat_completion_copilot(
     Returns:
         Chat completion response
     """
+    import logging
+    import time
+    
+    logger = logging.getLogger(__name__)
+    start_time = time.time()
+    
+    # Log invocation details
+    logger.info(f"🤖 GitHub Copilot Chat Completion")
+    logger.info(f"   📋 Model: {model}")
+    logger.info(f"   🌡️  Temperature: {temperature}")
+    logger.info(f"   🎛️  Max tokens: {max_tokens}")
+    logger.info(f"   💬 Message count: {len(messages)}")
+    
+    # Log message preview (truncated for privacy/readability)
+    if messages:
+        first_msg = messages[0]
+        content = first_msg.get('content', '')
+        content_preview = content[:150] + ('...' if len(content) > 150 else '')
+        logger.info(f"   📝 First message ({first_msg.get('role', 'unknown')}): {content_preview}")
+        
+        # Log total content length
+        total_chars = sum(len(msg.get('content', '')) for msg in messages)
+        logger.debug(f"   📏 Total content length: {total_chars} characters")
+    
+    # Log additional parameters
+    if kwargs:
+        logger.debug(f"   ⚙️  Additional params: {list(kwargs.keys())}")
+    
     async def _create():
         try:
+            logger.info("🚀 Initializing Copilot client...")
             client = await get_copilot_client()
             if client is None:
+                logger.error("❌ Copilot client not available")
+                logger.info("   💡 Make sure GITHUB_TOKEN environment variable is set")
                 raise Exception("Copilot client not available")
             
-            return await client.create_chat_completion(
+            logger.info("✅ Copilot client ready, making chat completion request...")
+            response = await client.create_chat_completion(
                 messages=messages,
                 model=model,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 **kwargs
             )
+            
+            elapsed_time = time.time() - start_time
+            
+            # Extract response details for logging
+            choices = response.get('choices', [])
+            if choices:
+                response_content = choices[0].get('message', {}).get('content', '')
+                response_preview = response_content[:150] + ('...' if len(response_content) > 150 else '')
+                finish_reason = choices[0].get('finish_reason', 'unknown')
+            else:
+                response_content = ''
+                response_preview = '[No content]'
+                finish_reason = 'unknown'
+            
+            usage = response.get('usage', {})
+            prompt_tokens = usage.get('prompt_tokens', 0)
+            completion_tokens = usage.get('completion_tokens', 0)
+            total_tokens = usage.get('total_tokens', 0)
+            
+            logger.info(f"✅ Copilot chat completion successful!")
+            logger.info(f"   ⏱️  Response time: {elapsed_time:.2f}s")
+            logger.info(f"   🏷️  Model used: {response.get('model', model)}")
+            logger.info(f"   🎯 Tokens - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}")
+            logger.info(f"   📄 Response preview: {response_preview}")
+            logger.info(f"   ✋ Finish reason: {finish_reason}")
+            
+            # Calculate tokens per second if we have the data
+            if completion_tokens > 0:
+                tokens_per_sec = completion_tokens / elapsed_time
+                logger.debug(f"   📈 Generation speed: {tokens_per_sec:.1f} tokens/second")
+            
+            return response
+            
         except Exception as e:
-            print(f"Error in Copilot chat completion: {e}")
+            elapsed_time = time.time() - start_time
+            logger.error(f"❌ Copilot chat completion failed after {elapsed_time:.2f}s")
+            logger.error(f"   📋 Model: {model}")
+            logger.error(f"   🚨 Error: {type(e).__name__}: {str(e)[:200]}{'...' if len(str(e)) > 200 else ''}")
             raise
     
     try:
@@ -549,12 +695,15 @@ def create_chat_completion_copilot(
             loop = asyncio.get_running_loop()
             # If we get here, we're in an event loop, so we need to run in a thread
             import concurrent.futures
+            logger.debug("   🔄 Running in existing event loop (using thread executor)")
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, _create())
                 return future.result()
         except RuntimeError:
             # No event loop running, safe to use asyncio.run()
+            logger.debug("   🔄 No event loop detected, using asyncio.run()")
             return asyncio.run(_create())
     except Exception as e:
-        print(f"Error running async Copilot chat completion: {e}")
+        elapsed_time = time.time() - start_time
+        logger.error(f"❌ Error running async Copilot chat completion after {elapsed_time:.2f}s: {e}")
         raise

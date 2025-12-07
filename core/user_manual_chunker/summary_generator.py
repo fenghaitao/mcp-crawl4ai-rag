@@ -192,14 +192,34 @@ class SummaryGenerator:
             TimeoutError: If LLM call exceeds timeout
             Exception: If LLM call fails
         """
+        import time
+        
+        # Log summary generation attempt
+        logger.info(f"📝 Generating LLM Summary (Fallback)")
+        logger.info(f"   📋 Model: {self.model}")
+        logger.info(f"   ⏰ Timeout: {self.timeout}s")
+        logger.info(f"   📄 Content length: {len(chunk.content)} characters")
+        logger.info(f"   📊 Max summary length: {self.max_summary_length} words")
+        
+        # Log content context
+        heading_path = " > ".join(metadata.heading_hierarchy) if metadata.heading_hierarchy else "Unknown"
+        logger.info(f"   📍 Section: {heading_path}")
+        logger.info(f"   💻 Contains code: {metadata.contains_code}")
+        if metadata.contains_code and metadata.code_languages:
+            logger.info(f"   🔤 Languages: {', '.join(metadata.code_languages)}")
+        
         # Import here to avoid circular dependency
         from src.iflow_client import create_chat_completion_iflow
         
         # Build documentation-specific prompt
         prompt = self._build_documentation_prompt(chunk, doc_context, metadata)
+        logger.debug(f"   📝 Prompt length: {len(prompt)} characters")
+        
+        start_time = time.time()
         
         # Call LLM with timeout
         try:
+            logger.info("🚀 Making LLM summary request...")
             with timeout_context(self.timeout):
                 response = create_chat_completion_iflow(
                     messages=[{"role": "user", "content": prompt}],
@@ -208,17 +228,25 @@ class SummaryGenerator:
                     max_tokens=self.max_summary_length * 2  # Allow some buffer
                 )
                 
+                elapsed_time = time.time() - start_time
+                
                 # Validate response structure
                 if not response or "choices" not in response:
+                    logger.error("❌ Invalid response structure from LLM")
                     raise ValueError("Invalid response structure from LLM")
                 
                 if not response["choices"] or len(response["choices"]) == 0:
+                    logger.error("❌ No choices in LLM response")
                     raise ValueError("No choices in LLM response")
                 
                 if "message" not in response["choices"][0]:
+                    logger.error("❌ No message in LLM response choice")
                     raise ValueError("No message in LLM response choice")
                 
                 summary = response["choices"][0]["message"]["content"].strip()
+                
+                # Log raw summary
+                logger.debug(f"   📄 Raw summary: {summary}")
                 
                 # Clean up markdown formatting
                 summary = summary.replace("**", "").replace("*", "")
@@ -226,13 +254,27 @@ class SummaryGenerator:
                 # Remove "Summary:" prefix if present
                 summary = re.sub(r'^Summary:\s*', '', summary, flags=re.IGNORECASE)
                 
+                # Log final summary
+                word_count = len(summary.split())
+                logger.info(f"✅ LLM summary generated successfully!")
+                logger.info(f"   ⏱️  Response time: {elapsed_time:.2f}s")
+                logger.info(f"   📊 Summary length: {word_count} words")
+                logger.info(f"   📝 Summary: {summary[:100]}{'...' if len(summary) > 100 else ''}")
+                
                 return summary
                 
         except TimeoutError:
-            logger.warning(f"LLM call timed out after {self.timeout} seconds")
+            elapsed_time = time.time() - start_time
+            logger.warning(f"⏰ LLM summary call timed out after {elapsed_time:.2f}s (limit: {self.timeout}s)")
+            logger.warning(f"   📋 Model: {self.model}")
+            logger.warning(f"   📍 Section: {heading_path}")
             raise
         except Exception as e:
-            logger.error(f"LLM call failed: {e}")
+            elapsed_time = time.time() - start_time
+            logger.error(f"❌ LLM summary call failed after {elapsed_time:.2f}s")
+            logger.error(f"   📋 Model: {self.model}")
+            logger.error(f"   📍 Section: {heading_path}")
+            logger.error(f"   🚨 Error: {type(e).__name__}: {str(e)}")
             raise
     
     def _build_documentation_prompt(
