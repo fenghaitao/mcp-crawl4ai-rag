@@ -22,9 +22,10 @@ load_dotenv()
 class DocumentIngestService:
     """Service for ingesting documentation files into the RAG system."""
     
-    def __init__(self, backend):
-        """Initialize with database backend."""
+    def __init__(self, backend, git_service=None):
+        """Initialize with database backend and optional git service."""
         self.backend = backend
+        self.git_service = git_service
         self._chunker = None
     
     def _get_chunker(self):
@@ -56,15 +57,45 @@ class DocumentIngestService:
         if not self.backend.remove_file_data(file_path):
             raise Exception(f"Failed to remove existing file data for: {file_path}")
     
-    def _store_file_record(self, file_path: str, content_hash: str, stats: Dict) -> str:
+    def _store_file_record(self, file_path: str, content_hash: str, stats: Dict, git_info=None) -> str:
         """Store file record and return file ID."""
+        from datetime import datetime
+        
         try:
-            return self.backend.store_file_record(
-                file_path=file_path,
-                content_hash=content_hash,
-                file_size=stats['size'],
-                content_type='documentation'
-            )
+            # If git_service is available and file is in a repo, use temporal versioning
+            if git_info:
+                # Get or create repository record
+                repo = self.backend.get_repository(git_info.repo_url)
+                if not repo:
+                    repo_name = git_info.repo_url.split('/')[-1].replace('.git', '')
+                    repo_id = self.backend.store_repository(git_info.repo_url, repo_name)
+                else:
+                    repo_id = repo['id']
+                    self.backend.update_repository_last_ingested(repo_id)
+                
+                # Store file version with temporal fields
+                file_version = {
+                    'repo_id': repo_id,
+                    'commit_sha': git_info.commit_sha,
+                    'file_path': git_info.get_relative_path(Path(file_path)),
+                    'content_hash': content_hash,
+                    'file_size': stats['size'],
+                    'word_count': 0,
+                    'chunk_count': 0,
+                    'content_type': 'documentation',
+                    'valid_from': git_info.commit_timestamp,
+                    'valid_until': None,
+                    'ingested_at': datetime.now()
+                }
+                return self.backend.store_file_version(file_version)
+            else:
+                # Fall back to legacy method for files outside git repos
+                return self.backend.store_file_record(
+                    file_path=file_path,
+                    content_hash=content_hash,
+                    file_size=stats['size'],
+                    content_type='documentation'
+                )
         except Exception as e:
             raise Exception(f"Failed to store file record: {e}")
     
@@ -92,6 +123,11 @@ class DocumentIngestService:
         start_time = time.time()
         
         try:
+            # Detect git repository if git_service is available
+            git_info = None
+            if self.git_service:
+                git_info = self.git_service.detect_repository(Path(file_path))
+            
             # Calculate file hash for change detection
             content_hash = self._calculate_file_hash(file_path)
             file_stats = self._get_file_stats(file_path)
@@ -114,8 +150,8 @@ class DocumentIngestService:
             if force_reprocess:
                 self._remove_existing_file_data(file_path)
             
-            # Store file record
-            file_id = self._store_file_record(file_path, content_hash, file_stats)
+            # Store file record (with git info if available)
+            file_id = self._store_file_record(file_path, content_hash, file_stats, git_info)
             
             # Process document with UserManualChunker
             chunker = self._get_chunker()

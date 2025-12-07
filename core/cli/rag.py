@@ -240,6 +240,459 @@ def egest_python_test(ctx, file_path: str, format: str):
 
 
 @rag.command()
+@click.argument('directory', type=click.Path(exists=True, file_okay=False, dir_okay=True))
+@click.option('--pattern', '-p', default='*.md', help='File pattern to match (e.g., *.md,*.html,*.rst)')
+@click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
+@click.option('--force', '-f', is_flag=True, help='Force reprocess existing files')
+@click.option('--dry-run', is_flag=True, help='Validate files without processing')
+@click.option('--continue', 'resume', is_flag=True, help='Resume from previous progress')
+@click.pass_context
+@handle_cli_errors
+def ingest_docs_batch(ctx, directory: str, pattern: str, recursive: bool, 
+                      force: bool, dry_run: bool, resume: bool):
+    """Batch ingest multiple documentation files from a directory."""
+    from ..backends.factory import get_backend
+    from ..services.git_service import GitService
+    from ..services.document_ingest_service import DocumentIngestService
+    from ..services.batch_ingest_service import BatchIngestService
+    from pathlib import Path
+    import time
+    
+    verbose_echo(ctx, "Starting batch documentation ingestion...")
+    
+    dir_path = Path(directory)
+    click.echo(f"📁 Directory: {dir_path}")
+    click.echo(f"🔍 Pattern: {pattern}")
+    click.echo(f"📂 Recursive: {'Yes' if recursive else 'No'}")
+    click.echo(f"🔄 Force reprocess: {'Yes' if force else 'No'}")
+    click.echo(f"🧪 Dry run: {'Yes' if dry_run else 'No'}")
+    click.echo(f"⏯️  Resume: {'Yes' if resume else 'No'}")
+    click.echo()
+    
+    try:
+        # Get backend
+        backend_name = ctx.obj.get('db_backend')
+        backend = get_backend(backend_name)
+        
+        if not backend.is_connected():
+            click.echo("❌ Database not connected", err=True)
+            return
+        
+        # Create services
+        git_service = GitService()
+        ingest_service = DocumentIngestService(backend, git_service)
+        batch_service = BatchIngestService(backend, git_service, ingest_service)
+        
+        # Start batch ingestion
+        start_time = time.time()
+        click.echo("🚀 Starting batch ingestion...")
+        click.echo()
+        
+        progress = batch_service.ingest_batch(
+            directory=dir_path,
+            pattern=pattern,
+            recursive=recursive,
+            force=force,
+            dry_run=dry_run,
+            resume=resume
+        )
+        
+        elapsed_time = time.time() - start_time
+        
+        # Display summary
+        click.echo()
+        click.echo("=" * 60)
+        click.echo("📊 Batch Ingestion Summary")
+        click.echo("=" * 60)
+        click.echo(f"Total files discovered: {progress.total_files}")
+        click.echo(f"Files processed: {progress.processed}")
+        click.echo(f"✅ Succeeded: {progress.succeeded}")
+        click.echo(f"⏭️  Skipped: {progress.skipped}")
+        click.echo(f"❌ Failed: {progress.failed}")
+        click.echo(f"⏱️  Total time: {elapsed_time:.2f}s")
+        click.echo(f"📈 Progress: {progress.progress_percent:.1f}%")
+        
+        if progress.errors:
+            click.echo()
+            click.echo(f"⚠️  {len(progress.errors)} errors occurred:")
+            for i, error in enumerate(progress.errors[:5], 1):  # Show first 5 errors
+                click.echo(f"  {i}. {error.get('file', 'Unknown')}")
+                if 'issues' in error:
+                    for issue in error['issues']:
+                        click.echo(f"     - {issue}")
+                elif 'error' in error:
+                    click.echo(f"     - {error['error']}")
+            
+            if len(progress.errors) > 5:
+                click.echo(f"  ... and {len(progress.errors) - 5} more errors")
+            
+            error_report = dir_path / "batch_ingest_errors.json"
+            if error_report.exists():
+                click.echo(f"\n📄 Full error report: {error_report}")
+        
+        click.echo("=" * 60)
+        
+        if dry_run:
+            click.echo("\n✅ Dry run completed - no files were actually processed")
+        elif progress.failed > 0:
+            click.echo("\n⚠️  Batch ingestion completed with errors")
+        else:
+            click.echo("\n✅ Batch ingestion completed successfully!")
+        
+    except Exception as e:
+        click.echo(f"\n❌ Error during batch ingestion: {e}", err=True)
+        raise
+
+
+@rag.command()
+@click.argument('repo_url')
+@click.argument('file_path')
+@click.option('--commit', help='Query file at specific commit SHA')
+@click.option('--timestamp', help='Query file at specific timestamp (ISO format)')
+@click.option('--json', 'json_output', is_flag=True, help='Output in JSON format')
+@click.pass_context
+@handle_cli_errors
+def query_file(ctx, repo_url: str, file_path: str, commit: Optional[str], 
+               timestamp: Optional[str], json_output: bool):
+    """Query a specific file from the database with temporal constraints."""
+    from ..backends.factory import get_backend
+    from ..services.query_service import QueryService
+    from datetime import datetime
+    import json
+    
+    verbose_echo(ctx, "Querying file...")
+    
+    try:
+        # Get backend
+        backend_name = ctx.obj.get('db_backend')
+        backend = get_backend(backend_name)
+        
+        if not backend.is_connected():
+            click.echo("❌ Database not connected", err=True)
+            return
+        
+        # Create query service
+        query_service = QueryService(backend)
+        
+        # Parse timestamp if provided
+        ts = None
+        if timestamp:
+            try:
+                ts = datetime.fromisoformat(timestamp)
+            except ValueError:
+                click.echo(f"❌ Invalid timestamp format: {timestamp}", err=True)
+                click.echo("   Use ISO format: YYYY-MM-DDTHH:MM:SS", err=True)
+                return
+        
+        # Query file
+        result = query_service.query_file(repo_url, file_path, commit_sha=commit, timestamp=ts)
+        
+        if not result:
+            click.echo("❌ File not found", err=True)
+            return
+        
+        # Output results
+        if json_output:
+            # JSON output
+            output = {
+                'file_id': result.get('id'),
+                'repo_url': repo_url,
+                'file_path': result.get('file_path'),
+                'commit_sha': result.get('commit_sha'),
+                'content_hash': result.get('content_hash'),
+                'file_size': result.get('file_size'),
+                'word_count': result.get('word_count'),
+                'chunk_count': result.get('chunk_count'),
+                'content_type': result.get('content_type'),
+                'valid_from': result.get('valid_from').isoformat() if result.get('valid_from') else None,
+                'valid_until': result.get('valid_until').isoformat() if result.get('valid_until') else None,
+                'ingested_at': result.get('ingested_at').isoformat() if result.get('ingested_at') else None
+            }
+            click.echo(json.dumps(output, indent=2))
+        else:
+            # Table format
+            click.echo("=" * 60)
+            click.echo("📄 File Information")
+            click.echo("=" * 60)
+            click.echo(f"File ID: {result.get('id')}")
+            click.echo(f"Repository: {repo_url}")
+            click.echo(f"File Path: {result.get('file_path')}")
+            click.echo(f"Commit SHA: {result.get('commit_sha')}")
+            click.echo(f"Content Hash: {result.get('content_hash', '')[:16]}...")
+            click.echo(f"File Size: {result.get('file_size')} bytes")
+            click.echo(f"Word Count: {result.get('word_count')}")
+            click.echo(f"Chunk Count: {result.get('chunk_count')}")
+            click.echo(f"Content Type: {result.get('content_type')}")
+            click.echo(f"Valid From: {result.get('valid_from')}")
+            click.echo(f"Valid Until: {result.get('valid_until') or 'Current'}")
+            click.echo(f"Ingested At: {result.get('ingested_at')}")
+            click.echo("=" * 60)
+        
+    except Exception as e:
+        click.echo(f"❌ Error querying file: {e}", err=True)
+        raise
+
+
+@rag.command()
+@click.option('--repo-url', help='Filter by repository URL')
+@click.option('--content-type', type=click.Choice(['documentation', 'code_dml', 'python_test']),
+              help='Filter by content type')
+@click.option('--current-only/--all-versions', default=True, 
+              help='Show only current versions or all versions')
+@click.option('--limit', type=int, default=100, help='Maximum number of results')
+@click.option('--offset', type=int, default=0, help='Offset for pagination')
+@click.option('--json', 'json_output', is_flag=True, help='Output in JSON format')
+@click.pass_context
+@handle_cli_errors
+def list_files(ctx, repo_url: Optional[str], content_type: Optional[str],
+               current_only: bool, limit: int, offset: int, json_output: bool):
+    """List ingested files with filtering and pagination."""
+    from ..backends.factory import get_backend
+    from ..services.query_service import QueryService
+    import json
+    
+    verbose_echo(ctx, "Listing files...")
+    
+    try:
+        # Get backend
+        backend_name = ctx.obj.get('db_backend')
+        backend = get_backend(backend_name)
+        
+        if not backend.is_connected():
+            click.echo("❌ Database not connected", err=True)
+            return
+        
+        # Create query service
+        query_service = QueryService(backend)
+        
+        # List files
+        files, total = query_service.list_files(
+            repo_url=repo_url,
+            content_type=content_type,
+            current_only=current_only,
+            limit=limit,
+            offset=offset
+        )
+        
+        if json_output:
+            # JSON output
+            output = {
+                'total': total,
+                'limit': limit,
+                'offset': offset,
+                'count': len(files),
+                'files': [
+                    {
+                        'file_id': f.get('id'),
+                        'file_path': f.get('file_path'),
+                        'commit_sha': f.get('commit_sha'),
+                        'content_type': f.get('content_type'),
+                        'word_count': f.get('word_count'),
+                        'chunk_count': f.get('chunk_count'),
+                        'valid_from': f.get('valid_from').isoformat() if f.get('valid_from') else None,
+                        'valid_until': f.get('valid_until').isoformat() if f.get('valid_until') else None
+                    }
+                    for f in files
+                ]
+            }
+            click.echo(json.dumps(output, indent=2))
+        else:
+            # Table format
+            click.echo("=" * 100)
+            click.echo(f"📚 Files List (showing {len(files)} of {total} total)")
+            click.echo("=" * 100)
+            
+            if not files:
+                click.echo("No files found matching the criteria")
+            else:
+                # Header
+                click.echo(f"{'ID':<8} {'Path':<40} {'Type':<15} {'Chunks':<8} {'Words':<10}")
+                click.echo("-" * 100)
+                
+                # Rows
+                for f in files:
+                    file_id = str(f.get('id', ''))[:7]
+                    path = str(f.get('file_path', ''))[:39]
+                    content_type = str(f.get('content_type', ''))[:14]
+                    chunks = str(f.get('chunk_count', 0))
+                    words = str(f.get('word_count', 0))
+                    
+                    click.echo(f"{file_id:<8} {path:<40} {content_type:<15} {chunks:<8} {words:<10}")
+            
+            click.echo("=" * 100)
+            
+            # Pagination info
+            if total > limit:
+                pages = (total + limit - 1) // limit
+                current_page = (offset // limit) + 1
+                click.echo(f"\nPage {current_page} of {pages} | Use --offset and --limit for pagination")
+        
+    except Exception as e:
+        click.echo(f"❌ Error listing files: {e}", err=True)
+        raise
+
+
+@rag.command()
+@click.argument('repo_url')
+@click.argument('file_path')
+@click.option('--limit', type=int, default=100, help='Maximum number of versions to show')
+@click.option('--json', 'json_output', is_flag=True, help='Output in JSON format')
+@click.pass_context
+@handle_cli_errors
+def file_history(ctx, repo_url: str, file_path: str, limit: int, json_output: bool):
+    """Show version history for a specific file."""
+    from ..backends.factory import get_backend
+    from ..services.query_service import QueryService
+    import json
+    
+    verbose_echo(ctx, "Retrieving file history...")
+    
+    try:
+        # Get backend
+        backend_name = ctx.obj.get('db_backend')
+        backend = get_backend(backend_name)
+        
+        if not backend.is_connected():
+            click.echo("❌ Database not connected", err=True)
+            return
+        
+        # Create query service
+        query_service = QueryService(backend)
+        
+        # Get file history
+        history = query_service.get_file_history(repo_url, file_path, limit)
+        
+        if not history:
+            click.echo("❌ No history found for this file", err=True)
+            return
+        
+        if json_output:
+            # JSON output
+            output = {
+                'repo_url': repo_url,
+                'file_path': file_path,
+                'version_count': len(history),
+                'versions': [
+                    {
+                        'file_id': v.get('id'),
+                        'commit_sha': v.get('commit_sha'),
+                        'valid_from': v.get('valid_from').isoformat() if v.get('valid_from') else None,
+                        'valid_until': v.get('valid_until').isoformat() if v.get('valid_until') else None,
+                        'word_count': v.get('word_count'),
+                        'chunk_count': v.get('chunk_count'),
+                        'content_hash': v.get('content_hash')
+                    }
+                    for v in history
+                ]
+            }
+            click.echo(json.dumps(output, indent=2))
+        else:
+            # Table format
+            click.echo("=" * 100)
+            click.echo(f"📜 File History: {file_path}")
+            click.echo(f"📦 Repository: {repo_url}")
+            click.echo(f"📊 Total versions: {len(history)}")
+            click.echo("=" * 100)
+            
+            # Header
+            click.echo(f"{'Commit':<12} {'Valid From':<20} {'Valid Until':<20} {'Words':<10} {'Chunks':<8}")
+            click.echo("-" * 100)
+            
+            # Rows
+            for v in history:
+                commit = str(v.get('commit_sha', ''))[:11]
+                valid_from = str(v.get('valid_from', ''))[:19]
+                valid_until = str(v.get('valid_until') or 'Current')[:19]
+                words = str(v.get('word_count', 0))
+                chunks = str(v.get('chunk_count', 0))
+                
+                click.echo(f"{commit:<12} {valid_from:<20} {valid_until:<20} {words:<10} {chunks:<8}")
+            
+            click.echo("=" * 100)
+        
+    except Exception as e:
+        click.echo(f"❌ Error retrieving file history: {e}", err=True)
+        raise
+
+
+@rag.command()
+@click.argument('file_id', type=int)
+@click.option('--json', 'json_output', is_flag=True, help='Output in JSON format')
+@click.pass_context
+@handle_cli_errors
+def list_chunks(ctx, file_id: int, json_output: bool):
+    """List all chunks for a specific file."""
+    from ..backends.factory import get_backend
+    from ..services.query_service import QueryService
+    import json
+    
+    verbose_echo(ctx, "Listing chunks...")
+    
+    try:
+        # Get backend
+        backend_name = ctx.obj.get('db_backend')
+        backend = get_backend(backend_name)
+        
+        if not backend.is_connected():
+            click.echo("❌ Database not connected", err=True)
+            return
+        
+        # Create query service
+        query_service = QueryService(backend)
+        
+        # Get chunks
+        chunks = query_service.get_file_chunks(file_id)
+        
+        if not chunks:
+            click.echo(f"❌ No chunks found for file ID {file_id}", err=True)
+            return
+        
+        if json_output:
+            # JSON output
+            output = {
+                'file_id': file_id,
+                'chunk_count': len(chunks),
+                'chunks': [
+                    {
+                        'chunk_id': c.get('id'),
+                        'chunk_number': c.get('chunk_number'),
+                        'content_preview': c.get('content', '')[:100] + '...' if len(c.get('content', '')) > 100 else c.get('content', ''),
+                        'word_count': c.get('metadata', {}).get('word_count'),
+                        'has_code': c.get('metadata', {}).get('has_code'),
+                        'summary': c.get('summary')
+                    }
+                    for c in chunks
+                ]
+            }
+            click.echo(json.dumps(output, indent=2))
+        else:
+            # Table format
+            click.echo("=" * 100)
+            click.echo(f"📦 Chunks for File ID: {file_id}")
+            click.echo(f"📊 Total chunks: {len(chunks)}")
+            click.echo("=" * 100)
+            
+            # Header
+            click.echo(f"{'#':<5} {'Words':<8} {'Code':<6} {'Summary Preview':<70}")
+            click.echo("-" * 100)
+            
+            # Rows
+            for c in chunks:
+                num = str(c.get('chunk_number', ''))
+                words = str(c.get('metadata', {}).get('word_count', 0))
+                has_code = 'Yes' if c.get('metadata', {}).get('has_code') else 'No'
+                summary = str(c.get('summary', ''))[:69] if c.get('summary') else '-'
+                
+                click.echo(f"{num:<5} {words:<8} {has_code:<6} {summary:<70}")
+            
+            click.echo("=" * 100)
+        
+    except Exception as e:
+        click.echo(f"❌ Error listing chunks: {e}", err=True)
+        raise
+
+
+@rag.command()
 @click.argument('file_path', type=click.Path())
 @click.option('--confirm', '-c', is_flag=True, help='Skip confirmation prompt')
 @click.pass_context

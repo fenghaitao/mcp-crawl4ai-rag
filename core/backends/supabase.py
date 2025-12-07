@@ -42,6 +42,7 @@ class SupabaseBackend(DatabaseBackend):
                 ('sources', 'source_id'),
                 ('crawled_pages', 'id'),
                 ('code_examples', 'id'),
+                ('repositories', 'id'),             # Add repositories table
                 ('files', 'id'),                    # Add new tables
                 ('content_chunks', 'id')            # Add new tables
             ]
@@ -60,7 +61,7 @@ class SupabaseBackend(DatabaseBackend):
     
     def list_collections(self) -> List[str]:
         """List all tables in Supabase."""
-        return ['sources', 'crawled_pages', 'code_examples', 'files', 'content_chunks']
+        return ['sources', 'crawled_pages', 'code_examples', 'repositories', 'files', 'content_chunks']
     
     def delete_collection(self, name: str) -> bool:
         """Delete all records from a specific table."""
@@ -347,7 +348,8 @@ class SupabaseBackend(DatabaseBackend):
             'sources': 'Source metadata and summaries',
             'crawled_pages': 'Chunked documentation with embeddings (legacy)',
             'code_examples': 'Code snippets with summaries (legacy)',
-            'files': 'Individual files with content hashing and metadata',
+            'repositories': 'Git repositories containing documentation and source code',
+            'files': 'File versions with temporal validity tracking',
             'content_chunks': 'File-based text chunks with embeddings (new RAG system)'
         }
         return descriptions.get(table_name, f'Table: {table_name}')
@@ -441,3 +443,131 @@ class SupabaseBackend(DatabaseBackend):
             return True
         except Exception:
             return False
+
+    # Repository operations implementation
+    def store_repository(self, repo_url: str, repo_name: str) -> int:
+        """Store repository record and return repo_id."""
+        try:
+            # Use INSERT ON CONFLICT to handle duplicates
+            result = self._client.table('repositories').upsert({
+                'repo_url': repo_url,
+                'repo_name': repo_name,
+                'last_ingested_at': 'NOW()'
+            }, on_conflict='repo_url').execute()
+            
+            return result.data[0]['id']
+        except Exception as e:
+            raise Exception(f"Failed to store repository: {e}")
+    
+    def get_repository(self, repo_url: str) -> Optional[Dict[str, Any]]:
+        """Get repository by URL."""
+        try:
+            result = self._client.table('repositories').select('*').eq('repo_url', repo_url).execute()
+            if result.data:
+                return result.data[0]
+            return None
+        except Exception:
+            return None
+    
+    def get_repository_by_id(self, repo_id: int) -> Optional[Dict[str, Any]]:
+        """Get repository by ID."""
+        try:
+            result = self._client.table('repositories').select('*').eq('id', repo_id).execute()
+            if result.data:
+                return result.data[0]
+            return None
+        except Exception:
+            return None
+    
+    def update_repository_last_ingested(self, repo_id: int) -> bool:
+        """Update last_ingested_at timestamp."""
+        try:
+            self._client.table('repositories').update({
+                'last_ingested_at': 'NOW()'
+            }).eq('id', repo_id).execute()
+            return True
+        except Exception:
+            return False
+
+    # Temporal file operations implementation
+    def store_file_version(self, file_version: Dict[str, Any]) -> int:
+        """Store new file version and update previous version's valid_until."""
+        try:
+            # First, update any existing current version to set valid_until
+            if 'valid_from' in file_version:
+                self._client.table('files').update({
+                    'valid_until': file_version['valid_from']
+                }).eq('repo_id', file_version['repo_id']).eq('file_path', file_version['file_path']).is_('valid_until', 'null').execute()
+            
+            # Insert new version
+            result = self._client.table('files').insert(file_version).execute()
+            return result.data[0]['id']
+        except Exception as e:
+            raise Exception(f"Failed to store file version: {e}")
+    
+    def get_current_file(self, repo_id: int, file_path: str) -> Optional[Dict[str, Any]]:
+        """Get currently valid version of a file (valid_until IS NULL)."""
+        try:
+            result = self._client.table('files').select('*').eq('repo_id', repo_id).eq('file_path', file_path).is_('valid_until', 'null').execute()
+            if result.data:
+                return result.data[0]
+            return None
+        except Exception:
+            return None
+    
+    def get_file_at_time(self, repo_id: int, file_path: str, timestamp: Any) -> Optional[Dict[str, Any]]:
+        """Get file version valid at specific timestamp."""
+        try:
+            # Query for file where valid_from <= timestamp AND (valid_until IS NULL OR valid_until > timestamp)
+            result = self._client.table('files').select('*').eq('repo_id', repo_id).eq('file_path', file_path).lte('valid_from', timestamp.isoformat()).order('valid_from', desc=True).limit(1).execute()
+            
+            if result.data:
+                file_record = result.data[0]
+                # Check valid_until constraint
+                if file_record['valid_until'] is None or file_record['valid_until'] > timestamp.isoformat():
+                    return file_record
+            return None
+        except Exception:
+            return None
+    
+    def get_file_at_commit(self, repo_id: int, file_path: str, commit_sha: str) -> Optional[Dict[str, Any]]:
+        """Get file version from specific commit."""
+        try:
+            result = self._client.table('files').select('*').eq('repo_id', repo_id).eq('file_path', file_path).eq('commit_sha', commit_sha).execute()
+            if result.data:
+                return result.data[0]
+            return None
+        except Exception:
+            return None
+    
+    def get_file_history(self, repo_id: int, file_path: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get all versions of a file ordered by valid_from."""
+        try:
+            result = self._client.table('files').select('*').eq('repo_id', repo_id).eq('file_path', file_path).order('valid_from', desc=True).limit(limit).execute()
+            return result.data if result.data else []
+        except Exception:
+            return []
+    
+    def list_files(self, repo_id: Optional[int] = None, content_type: Optional[str] = None,
+                   current_only: bool = True, limit: int = 100, offset: int = 0) -> tuple[List[Dict[str, Any]], int]:
+        """List files with filtering and pagination."""
+        try:
+            query = self._client.table('files').select('*', count='exact')
+            
+            # Apply filters
+            if repo_id is not None:
+                query = query.eq('repo_id', repo_id)
+            if content_type is not None:
+                query = query.eq('content_type', content_type)
+            if current_only:
+                query = query.is_('valid_until', 'null')
+            
+            # Apply pagination and ordering
+            result = query.order('ingested_at', desc=True).range(offset, offset + limit - 1).execute()
+            
+            files = result.data if result.data else []
+            total_count = result.count if hasattr(result, 'count') else len(files)
+            
+            return files, total_count
+        except Exception:
+            return [], 0

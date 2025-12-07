@@ -106,7 +106,7 @@ class ChromaBackend(DatabaseBackend):
         # Instead, we ensure the basic collections exist
         try:
             # Create default collections if they don't exist
-            collection_names = ['files', 'content_chunks']
+            collection_names = ['repositories', 'files', 'content_chunks']
             
             for collection_name in collection_names:
                 try:
@@ -187,7 +187,8 @@ class ChromaBackend(DatabaseBackend):
             'sources': 'Source metadata and summaries',
             'crawled_pages': 'Chunked documentation with embeddings',
             'code_examples': 'Code snippets with summaries',
-            'files': 'Individual files with content hashing and metadata',
+            'repositories': 'Git repositories containing documentation and source code',
+            'files': 'File versions with temporal validity tracking',
             'content_chunks': 'File-based text chunks with embeddings'
         }
         return descriptions.get(collection_name, f'Collection: {collection_name}')
@@ -376,3 +377,299 @@ class ChromaBackend(DatabaseBackend):
             return True
         except Exception:
             return False
+
+    # Repository operations implementation
+    def store_repository(self, repo_url: str, repo_name: str) -> int:
+        """Store repository record and return repo_id."""
+        import hashlib
+        from datetime import datetime
+        
+        try:
+            repos_collection = self._client.get_or_create_collection('repositories')
+            
+            # Generate unique repo ID
+            repo_id = int(hashlib.md5(repo_url.encode()).hexdigest()[:8], 16)
+            
+            # Check if repository already exists
+            try:
+                existing = repos_collection.get(ids=[str(repo_id)])
+                if existing['ids']:
+                    # Update last_ingested_at
+                    metadata = existing['metadatas'][0]
+                    metadata['last_ingested_at'] = datetime.now().isoformat()
+                    repos_collection.update(
+                        ids=[str(repo_id)],
+                        metadatas=[metadata]
+                    )
+                    return repo_id
+            except Exception:
+                pass
+            
+            # Create new repository record
+            repo_metadata = {
+                'repo_url': repo_url,
+                'repo_name': repo_name,
+                'created_at': datetime.now().isoformat(),
+                'last_ingested_at': datetime.now().isoformat()
+            }
+            
+            repos_collection.add(
+                ids=[str(repo_id)],
+                documents=[repo_url],
+                metadatas=[repo_metadata]
+            )
+            return repo_id
+        except Exception as e:
+            raise Exception(f"Failed to store repository: {e}")
+    
+    def get_repository(self, repo_url: str) -> Optional[Dict[str, Any]]:
+        """Get repository by URL."""
+        import hashlib
+        
+        try:
+            repos_collection = self._client.get_collection('repositories')
+            repo_id = int(hashlib.md5(repo_url.encode()).hexdigest()[:8], 16)
+            
+            result = repos_collection.get(ids=[str(repo_id)])
+            if result['ids']:
+                metadata = result['metadatas'][0]
+                metadata['id'] = repo_id
+                return metadata
+            return None
+        except Exception:
+            return None
+    
+    def get_repository_by_id(self, repo_id: int) -> Optional[Dict[str, Any]]:
+        """Get repository by ID."""
+        try:
+            repos_collection = self._client.get_collection('repositories')
+            result = repos_collection.get(ids=[str(repo_id)])
+            if result['ids']:
+                metadata = result['metadatas'][0]
+                metadata['id'] = repo_id
+                return metadata
+            return None
+        except Exception:
+            return None
+    
+    def update_repository_last_ingested(self, repo_id: int) -> bool:
+        """Update last_ingested_at timestamp."""
+        from datetime import datetime
+        
+        try:
+            repos_collection = self._client.get_collection('repositories')
+            result = repos_collection.get(ids=[str(repo_id)])
+            if result['ids']:
+                metadata = result['metadatas'][0]
+                metadata['last_ingested_at'] = datetime.now().isoformat()
+                repos_collection.update(
+                    ids=[str(repo_id)],
+                    metadatas=[metadata]
+                )
+                return True
+            return False
+        except Exception:
+            return False
+
+    # Temporal file operations implementation
+    def store_file_version(self, file_version: Dict[str, Any]) -> int:
+        """Store new file version and update previous version's valid_until."""
+        import hashlib
+        from datetime import datetime
+        
+        try:
+            files_collection = self._client.get_or_create_collection('files')
+            
+            # Generate unique file version ID
+            version_key = f"{file_version['repo_id']}_{file_version['commit_sha']}_{file_version['file_path']}"
+            file_id = int(hashlib.md5(version_key.encode()).hexdigest()[:8], 16)
+            
+            # Update previous current version if exists
+            if 'valid_from' in file_version:
+                # Find current version (valid_until is None)
+                try:
+                    all_files = files_collection.get(
+                        where={
+                            "$and": [
+                                {"repo_id": file_version['repo_id']},
+                                {"file_path": file_version['file_path']}
+                            ]
+                        }
+                    )
+                    
+                    for i, metadata in enumerate(all_files['metadatas']):
+                        if metadata.get('valid_until') is None:
+                            # Update this version's valid_until
+                            metadata['valid_until'] = file_version['valid_from']
+                            files_collection.update(
+                                ids=[all_files['ids'][i]],
+                                metadatas=[metadata]
+                            )
+                except Exception:
+                    pass
+            
+            # Store new version
+            file_metadata = file_version.copy()
+            file_metadata['id'] = file_id
+            
+            # Convert datetime objects to ISO format strings
+            if 'valid_from' in file_metadata and hasattr(file_metadata['valid_from'], 'isoformat'):
+                file_metadata['valid_from'] = file_metadata['valid_from'].isoformat()
+            if 'valid_until' in file_metadata and file_metadata['valid_until'] and hasattr(file_metadata['valid_until'], 'isoformat'):
+                file_metadata['valid_until'] = file_metadata['valid_until'].isoformat()
+            if 'ingested_at' in file_metadata and hasattr(file_metadata['ingested_at'], 'isoformat'):
+                file_metadata['ingested_at'] = file_metadata['ingested_at'].isoformat()
+            
+            files_collection.add(
+                ids=[str(file_id)],
+                documents=[file_version['file_path']],
+                metadatas=[file_metadata]
+            )
+            return file_id
+        except Exception as e:
+            raise Exception(f"Failed to store file version: {e}")
+    
+    def get_current_file(self, repo_id: int, file_path: str) -> Optional[Dict[str, Any]]:
+        """Get currently valid version of a file (valid_until IS NULL)."""
+        try:
+            files_collection = self._client.get_collection('files')
+            results = files_collection.get(
+                where={
+                    "$and": [
+                        {"repo_id": repo_id},
+                        {"file_path": file_path}
+                    ]
+                }
+            )
+            
+            # Find version with valid_until = None
+            for i, metadata in enumerate(results['metadatas']):
+                if metadata.get('valid_until') is None:
+                    return metadata
+            return None
+        except Exception:
+            return None
+    
+    def get_file_at_time(self, repo_id: int, file_path: str, timestamp: Any) -> Optional[Dict[str, Any]]:
+        """Get file version valid at specific timestamp."""
+        from datetime import datetime
+        
+        try:
+            files_collection = self._client.get_collection('files')
+            results = files_collection.get(
+                where={
+                    "$and": [
+                        {"repo_id": repo_id},
+                        {"file_path": file_path}
+                    ]
+                }
+            )
+            
+            # Convert timestamp to ISO format for comparison
+            if hasattr(timestamp, 'isoformat'):
+                timestamp_str = timestamp.isoformat()
+            else:
+                timestamp_str = str(timestamp)
+            
+            # Find version valid at timestamp
+            valid_versions = []
+            for metadata in results['metadatas']:
+                valid_from = metadata.get('valid_from')
+                valid_until = metadata.get('valid_until')
+                
+                if valid_from and valid_from <= timestamp_str:
+                    if valid_until is None or valid_until > timestamp_str:
+                        valid_versions.append(metadata)
+            
+            # Return most recent valid version
+            if valid_versions:
+                return sorted(valid_versions, key=lambda x: x.get('valid_from', ''), reverse=True)[0]
+            return None
+        except Exception:
+            return None
+    
+    def get_file_at_commit(self, repo_id: int, file_path: str, commit_sha: str) -> Optional[Dict[str, Any]]:
+        """Get file version from specific commit."""
+        try:
+            files_collection = self._client.get_collection('files')
+            results = files_collection.get(
+                where={
+                    "$and": [
+                        {"repo_id": repo_id},
+                        {"file_path": file_path},
+                        {"commit_sha": commit_sha}
+                    ]
+                }
+            )
+            
+            if results['metadatas']:
+                return results['metadatas'][0]
+            return None
+        except Exception:
+            return None
+    
+    def get_file_history(self, repo_id: int, file_path: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get all versions of a file ordered by valid_from."""
+        try:
+            files_collection = self._client.get_collection('files')
+            results = files_collection.get(
+                where={
+                    "$and": [
+                        {"repo_id": repo_id},
+                        {"file_path": file_path}
+                    ]
+                }
+            )
+            
+            # Sort by valid_from descending
+            versions = sorted(
+                results['metadatas'],
+                key=lambda x: x.get('valid_from', ''),
+                reverse=True
+            )
+            
+            return versions[:limit]
+        except Exception:
+            return []
+    
+    def list_files(self, repo_id: Optional[int] = None, content_type: Optional[str] = None,
+                   current_only: bool = True, limit: int = 100, offset: int = 0) -> tuple[List[Dict[str, Any]], int]:
+        """List files with filtering and pagination."""
+        try:
+            files_collection = self._client.get_collection('files')
+            
+            # Build where clause
+            where_conditions = []
+            if repo_id is not None:
+                where_conditions.append({"repo_id": repo_id})
+            if content_type is not None:
+                where_conditions.append({"content_type": content_type})
+            
+            # Get all matching files
+            if where_conditions:
+                results = files_collection.get(
+                    where={"$and": where_conditions} if len(where_conditions) > 1 else where_conditions[0]
+                )
+            else:
+                results = files_collection.get()
+            
+            # Filter for current only
+            files = []
+            for metadata in results['metadatas']:
+                if current_only:
+                    if metadata.get('valid_until') is None:
+                        files.append(metadata)
+                else:
+                    files.append(metadata)
+            
+            # Sort by ingested_at descending
+            files = sorted(files, key=lambda x: x.get('ingested_at', ''), reverse=True)
+            
+            total_count = len(files)
+            
+            # Apply pagination
+            paginated_files = files[offset:offset + limit]
+            
+            return paginated_files, total_count
+        except Exception:
+            return [], 0

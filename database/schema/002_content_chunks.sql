@@ -1,15 +1,12 @@
--- Fresh content_chunks table for new file-based RAG operations
--- This is a separate table from the existing crawled_pages table
-
+-- Content chunks table for file-based RAG operations with temporal versioning support
 CREATE TABLE content_chunks (
     id BIGSERIAL PRIMARY KEY,
     file_id BIGINT NOT NULL,                           -- Reference to files table
-    url VARCHAR NOT NULL,                              -- URL or file path for this chunk
-    chunk_number INTEGER NOT NULL,                     -- Sequential number of this chunk within the file
-    content TEXT NOT NULL,                             -- The actual text content of the chunk
+    chunk_number INTEGER NOT NULL,                     -- Sequential number within file
+    content TEXT NOT NULL,                             -- Chunk text content
     content_type VARCHAR(50) NOT NULL,                 -- 'code_dml', 'python_test', 'documentation'
     summary TEXT,                                      -- LLM-generated summary (optional)
-    metadata JSONB NOT NULL DEFAULT '{}'::JSONB,       -- Additional metadata (title, section, word_count, has_code, AST info, etc.)
+    metadata JSONB NOT NULL DEFAULT '{}'::JSONB,       -- Additional metadata
     embedding vector(1536),                            -- Vector embedding for semantic search
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     
@@ -24,7 +21,7 @@ CREATE TABLE content_chunks (
 CREATE INDEX idx_content_chunks_file_id ON content_chunks(file_id);
 CREATE INDEX idx_content_chunks_content_type ON content_chunks(content_type);
 CREATE INDEX idx_content_chunks_created_at ON content_chunks(created_at);
-CREATE INDEX idx_content_chunks_has_code ON content_chunks((metadata->>'has_code')) WHERE (metadata->>'has_code')::boolean = TRUE;
+CREATE INDEX idx_content_chunks_metadata ON content_chunks USING gin (metadata);
 
 -- Partial indexes for type-specific queries
 CREATE INDEX idx_content_chunks_code_dml ON content_chunks(file_id, chunk_number) WHERE content_type = 'code_dml';

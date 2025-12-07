@@ -134,7 +134,7 @@ def stats(ctx):
 
 
 @db.command()
-@click.option('--table', '-t', type=click.Choice(['sources', 'crawled_pages', 'code_examples', 'files', 'content_chunks', 'all']), 
+@click.option('--table', '-t', type=click.Choice(['sources', 'crawled_pages', 'code_examples', 'repositories', 'files', 'content_chunks', 'all']), 
               default='all', help='Specify which table/collection to list')
 @click.option('--limit', '-l', type=int, default=10, help='Number of records to display')
 @click.option('--full-content', '-f', is_flag=True, help='Show full content instead of truncated preview')

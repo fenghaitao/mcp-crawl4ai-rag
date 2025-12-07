@@ -116,3 +116,148 @@ class DatabaseBackend(ABC):
             True if successful, False otherwise
         """
         pass
+    
+    # Repository operations
+    @abstractmethod
+    def store_repository(self, repo_url: str, repo_name: str) -> int:
+        """
+        Store repository record and return repo_id.
+        
+        Args:
+            repo_url: Git remote URL
+            repo_name: Repository name for display
+            
+        Returns:
+            Repository ID
+        """
+        pass
+    
+    @abstractmethod
+    def get_repository(self, repo_url: str) -> Optional[Dict[str, Any]]:
+        """
+        Get repository by URL.
+        
+        Args:
+            repo_url: Git remote URL
+            
+        Returns:
+            Repository dict if found, None otherwise
+        """
+        pass
+    
+    @abstractmethod
+    def get_repository_by_id(self, repo_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get repository by ID.
+        
+        Args:
+            repo_id: Repository ID
+            
+        Returns:
+            Repository dict if found, None otherwise
+        """
+        pass
+    
+    @abstractmethod
+    def update_repository_last_ingested(self, repo_id: int) -> bool:
+        """
+        Update last_ingested_at timestamp for repository.
+        
+        Args:
+            repo_id: Repository ID
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        pass
+    
+    # File operations with temporal support
+    @abstractmethod
+    def store_file_version(self, file_version: Dict[str, Any]) -> int:
+        """
+        Store new file version and update previous version's valid_until.
+        
+        Args:
+            file_version: Dict containing file version data
+            
+        Returns:
+            File version ID
+        """
+        pass
+    
+    @abstractmethod
+    def get_current_file(self, repo_id: int, file_path: str) -> Optional[Dict[str, Any]]:
+        """
+        Get currently valid version of a file (valid_until IS NULL).
+        
+        Args:
+            repo_id: Repository ID
+            file_path: Relative file path
+            
+        Returns:
+            File version dict if found, None otherwise
+        """
+        pass
+    
+    @abstractmethod
+    def get_file_at_time(self, repo_id: int, file_path: str, timestamp: Any) -> Optional[Dict[str, Any]]:
+        """
+        Get file version valid at specific timestamp.
+        
+        Args:
+            repo_id: Repository ID
+            file_path: Relative file path
+            timestamp: Point in time (datetime)
+            
+        Returns:
+            File version dict if found, None otherwise
+        """
+        pass
+    
+    @abstractmethod
+    def get_file_at_commit(self, repo_id: int, file_path: str, commit_sha: str) -> Optional[Dict[str, Any]]:
+        """
+        Get file version from specific commit.
+        
+        Args:
+            repo_id: Repository ID
+            file_path: Relative file path
+            commit_sha: Git commit SHA
+            
+        Returns:
+            File version dict if found, None otherwise
+        """
+        pass
+    
+    @abstractmethod
+    def get_file_history(self, repo_id: int, file_path: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get all versions of a file ordered by valid_from.
+        
+        Args:
+            repo_id: Repository ID
+            file_path: Relative file path
+            limit: Maximum number of versions to return
+            
+        Returns:
+            List of file version dicts
+        """
+        pass
+    
+    @abstractmethod
+    def list_files(self, repo_id: Optional[int] = None, content_type: Optional[str] = None,
+                   current_only: bool = True, limit: int = 100, offset: int = 0) -> tuple[List[Dict[str, Any]], int]:
+        """
+        List files with filtering and pagination.
+        
+        Args:
+            repo_id: Filter by repository ID (optional)
+            content_type: Filter by content type (optional)
+            current_only: Only return current versions (valid_until IS NULL)
+            limit: Maximum number of files to return
+            offset: Number of files to skip
+            
+        Returns:
+            Tuple of (file_list, total_count)
+        """
+        pass

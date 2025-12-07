@@ -30,6 +30,8 @@ dependencies = [
     "pydantic>=2.0.0",
     # Database backends
     "chromadb>=0.4.0",
+    # Git integration
+    "gitpython>=3.1.0",
 ]
 
 [project.optional-dependencies]
