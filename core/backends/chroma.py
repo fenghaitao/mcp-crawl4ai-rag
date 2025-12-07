@@ -320,8 +320,8 @@ class ChromaBackend(DatabaseBackend):
                 'section': ' > '.join(chunk.metadata.heading_hierarchy),
                 'word_count': word_count,
                 'has_code': chunk.metadata.contains_code,
-                'heading_hierarchy': chunk.metadata.heading_hierarchy,
-                'language_hints': chunk.metadata.code_languages
+                'heading_hierarchy': ' > '.join(chunk.metadata.heading_hierarchy),  # Convert list to string
+                'language_hints': ', '.join(chunk.metadata.code_languages) if chunk.metadata.code_languages else ''  # Convert list to string
             }
             chunk_metadatas.append(metadata)
             

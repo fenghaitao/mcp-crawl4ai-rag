@@ -416,8 +416,8 @@ class SupabaseBackend(DatabaseBackend):
                     'section': ' > '.join(chunk.metadata.heading_hierarchy),
                     'word_count': word_count,
                     'has_code': chunk.metadata.contains_code,
-                    'heading_hierarchy': chunk.metadata.heading_hierarchy,
-                    'language_hints': chunk.metadata.code_languages
+                    'heading_hierarchy': chunk.metadata.heading_hierarchy,  # Keep as list for Supabase JSONB
+                    'language_hints': chunk.metadata.code_languages if chunk.metadata.code_languages else []  # Keep as list for Supabase JSONB
                 },
                 'embedding': chunk.embedding if chunk.embedding else None
             }
