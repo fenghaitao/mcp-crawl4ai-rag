@@ -47,7 +47,10 @@ async def test_copilot_embeddings():
     print(f"✅ GitHub token found (length: {len(github_token)})")
     
     # Import and initialize client
-    from copilot_client import CopilotClient
+    try:
+        from llms.copilot_client import CopilotClient
+    except ImportError:
+        from copilot_client import CopilotClient
     client = CopilotClient(github_token)
     
     print("Initializing Copilot client...")

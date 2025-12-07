@@ -15,7 +15,10 @@ project_root = Path(__file__).parent.parent
 src_path = project_root / "src"
 sys.path.insert(0, str(src_path))
 
-from copilot_client import CopilotClient, RateLimiter
+try:
+    from llms.copilot_client import CopilotClient, RateLimiter
+except ImportError:
+    from copilot_client import CopilotClient, RateLimiter
 
 
 async def test_rate_limiter_basic():

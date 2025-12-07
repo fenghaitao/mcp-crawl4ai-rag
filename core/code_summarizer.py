@@ -11,10 +11,13 @@ from typing import Dict, Any, Optional, TYPE_CHECKING
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
-    from server.iflow_client import create_chat_completion_iflow
+    from llms.iflow_client import create_chat_completion_iflow
 except ImportError:
     # Fallback for different execution contexts
-    from iflow_client import create_chat_completion_iflow
+    try:
+        from server.iflow_client import create_chat_completion_iflow
+    except ImportError:
+        from iflow_client import create_chat_completion_iflow
 
 if TYPE_CHECKING:
     from user_manual_chunker.interfaces import DocumentChunk

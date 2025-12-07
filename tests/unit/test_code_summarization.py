@@ -10,7 +10,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from core.code_summarizer import generate_file_summary, generate_chunk_summary
-from dashscope_client import test_dashscope_connection
+try:
+    from llms.dashscope_client import test_dashscope_connection
+except ImportError:
+    from dashscope_client import test_dashscope_connection
 
 
 # Sample DML code

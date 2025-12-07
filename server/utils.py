@@ -20,10 +20,15 @@ except ImportError:
 
 # Import Copilot client
 try:
-    from .copilot_client import create_embeddings_batch_copilot, create_embedding_copilot, create_chat_completion_copilot
+    # Try new llms package first
+    from llms.copilot_client import create_embeddings_batch_copilot, create_embedding_copilot, create_chat_completion_copilot
 except ImportError:
-    # Fallback for when running from different contexts (e.g., tests)
-    from copilot_client import create_embeddings_batch_copilot, create_embedding_copilot, create_chat_completion_copilot
+    try:
+        # Try relative import (when run as module)
+        from .copilot_client import create_embeddings_batch_copilot, create_embedding_copilot, create_chat_completion_copilot
+    except ImportError:
+        # Fallback for when running from different contexts (e.g., tests)
+        from copilot_client import create_embeddings_batch_copilot, create_embedding_copilot, create_chat_completion_copilot
 
 # Load OpenAI API key for embeddings
 openai.api_key = os.getenv("OPENAI_API_KEY")

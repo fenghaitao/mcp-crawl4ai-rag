@@ -10,7 +10,10 @@ from dotenv import load_dotenv
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from iflow_client import test_iflow_connection
+try:
+    from llms.iflow_client import test_iflow_connection
+except ImportError:
+    from iflow_client import test_iflow_connection
 from core.code_summarizer import generate_file_summary, generate_chunk_summary
 
 

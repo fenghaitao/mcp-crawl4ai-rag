@@ -209,7 +209,13 @@ class SummaryGenerator:
             logger.info(f"   🔤 Languages: {', '.join(metadata.code_languages)}")
         
         # Import here to avoid circular dependency
-        from src.iflow_client import create_chat_completion_iflow
+        try:
+            from llms.iflow_client import create_chat_completion_iflow
+        except ImportError:
+            try:
+                from src.iflow_client import create_chat_completion_iflow
+            except ImportError:
+                from iflow_client import create_chat_completion_iflow
         
         # Build documentation-specific prompt
         prompt = self._build_documentation_prompt(chunk, doc_context, metadata)
