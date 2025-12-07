@@ -476,6 +476,9 @@ class ChromaBackend(DatabaseBackend):
         """Store new file version and update previous version's valid_until."""
         import hashlib
         from datetime import datetime
+        import logging
+        
+        logger = logging.getLogger(__name__)
         
         try:
             files_collection = self._client.get_or_create_collection('files')
@@ -484,11 +487,13 @@ class ChromaBackend(DatabaseBackend):
             version_key = f"{file_version['repo_id']}_{file_version['commit_sha']}_{file_version['file_path']}"
             file_id = int(hashlib.md5(version_key.encode()).hexdigest()[:8], 16)
             
-            # Update previous current version if exists
+            # Transaction-like behavior: collect operations first
+            updates_to_perform = []
+            
+            # Find previous current version if exists
             if 'valid_from' in file_version:
-                # Find current version (valid_until is None)
                 try:
-                    all_files = files_collection.get(
+                    current_files = files_collection.get(
                         where={
                             "$and": [
                                 {"repo_id": file_version['repo_id']},
@@ -497,18 +502,23 @@ class ChromaBackend(DatabaseBackend):
                         }
                     )
                     
-                    for i, metadata in enumerate(all_files['metadatas']):
+                    # Prepare updates for current versions
+                    for i, metadata in enumerate(current_files['metadatas']):
                         if metadata.get('valid_until') is None:
-                            # Update this version's valid_until
-                            metadata['valid_until'] = file_version['valid_from']
-                            files_collection.update(
-                                ids=[all_files['ids'][i]],
-                                metadatas=[metadata]
+                            updated_metadata = metadata.copy()
+                            updated_metadata['valid_until'] = (
+                                file_version['valid_from'].isoformat() 
+                                if hasattr(file_version['valid_from'], 'isoformat') 
+                                else file_version['valid_from']
                             )
-                except Exception:
-                    pass
+                            updates_to_perform.append({
+                                'id': current_files['ids'][i],
+                                'metadata': updated_metadata
+                            })
+                except Exception as e:
+                    logger.warning(f"Error finding current version for update: {e}")
             
-            # Store new version
+            # Prepare new version metadata
             file_metadata = file_version.copy()
             file_metadata['id'] = file_id
             
@@ -520,12 +530,30 @@ class ChromaBackend(DatabaseBackend):
             if 'ingested_at' in file_metadata and hasattr(file_metadata['ingested_at'], 'isoformat'):
                 file_metadata['ingested_at'] = file_metadata['ingested_at'].isoformat()
             
-            files_collection.add(
-                ids=[str(file_id)],
-                documents=[file_version['file_path']],
-                metadatas=[file_metadata]
-            )
-            return file_id
+            # Execute operations (best effort transaction)
+            try:
+                # Perform updates first
+                for update in updates_to_perform:
+                    files_collection.update(
+                        ids=[update['id']],
+                        metadatas=[update['metadata']]
+                    )
+                
+                # Add new version
+                files_collection.add(
+                    ids=[str(file_id)],
+                    documents=[file_version['file_path']],
+                    metadatas=[file_metadata]
+                )
+                
+                return file_id
+                
+            except Exception as e:
+                logger.error(f"Failed to store file version (partial transaction): {e}")
+                # Note: ChromaDB doesn't support rollback, so we log the error
+                # Consider implementing a cleanup mechanism in production
+                raise Exception(f"Failed to store file version: {e}")
+                
         except Exception as e:
             raise Exception(f"Failed to store file version: {e}")
     
@@ -553,17 +581,10 @@ class ChromaBackend(DatabaseBackend):
     def get_file_at_time(self, repo_id: int, file_path: str, timestamp: Any) -> Optional[Dict[str, Any]]:
         """Get file version valid at specific timestamp."""
         from datetime import datetime
+        from ..config.batch_config import config
         
         try:
             files_collection = self._client.get_collection('files')
-            results = files_collection.get(
-                where={
-                    "$and": [
-                        {"repo_id": repo_id},
-                        {"file_path": file_path}
-                    ]
-                }
-            )
             
             # Convert timestamp to ISO format for comparison
             if hasattr(timestamp, 'isoformat'):
@@ -571,20 +592,33 @@ class ChromaBackend(DatabaseBackend):
             else:
                 timestamp_str = str(timestamp)
             
-            # Find version valid at timestamp
-            valid_versions = []
+            # Limit results to prevent memory issues
+            results = files_collection.get(
+                where={
+                    "$and": [
+                        {"repo_id": repo_id},
+                        {"file_path": file_path}
+                    ]
+                },
+                limit=config.temporal_query_limit
+            )
+            
+            # Find version valid at timestamp (optimized)
+            best_version = None
+            best_valid_from = None
+            
             for metadata in results['metadatas']:
                 valid_from = metadata.get('valid_from')
                 valid_until = metadata.get('valid_until')
                 
                 if valid_from and valid_from <= timestamp_str:
                     if valid_until is None or valid_until > timestamp_str:
-                        valid_versions.append(metadata)
+                        # This version is valid at the timestamp
+                        if best_valid_from is None or valid_from > best_valid_from:
+                            best_version = metadata
+                            best_valid_from = valid_from
             
-            # Return most recent valid version
-            if valid_versions:
-                return sorted(valid_versions, key=lambda x: x.get('valid_from', ''), reverse=True)[0]
-            return None
+            return best_version
         except Exception:
             return None
     
