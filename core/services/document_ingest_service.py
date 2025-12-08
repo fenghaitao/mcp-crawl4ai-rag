@@ -123,7 +123,7 @@ class DocumentIngestService:
         
         Content-based versioning: Only creates new versions when content actually changes.
         - Without force: Skips if content unchanged
-        - With force: Re-processes chunks (regenerates summaries/embeddings)
+        - With force: Re-processes (deletes old file/chunks and recreates with same content hash)
         
         Returns:
             Dict with success status, file_id, chunks_created, word_count, processing_time, error
@@ -179,20 +179,11 @@ class DocumentIngestService:
             if existing_current and existing_current.get('content_hash') == content_hash:
                 # Content unchanged!
                 if force_reprocess:
-                    # Force: Re-process chunks (regenerate summaries/embeddings)
-                    # Keep the same file_id but regenerate chunks
-                    file_id = existing_current['id']
+                    # Force: Delete old file and chunks, then recreate
+                    self._remove_existing_file_data(relative_path if git_info else file_path)
                     
-                    # Remove old chunks only (not the file record)
-                    try:
-                        # Get chunks collection and remove chunks for this file
-                        chunks_collection = self.backend._client.get_or_create_collection('content_chunks')
-                        chunk_results = chunks_collection.get(where={"file_id": str(file_id)})
-                        if chunk_results['ids']:
-                            chunks_collection.delete(ids=chunk_results['ids'])
-                    except Exception:
-                        # If chunk removal fails, continue anyway
-                        pass
+                    # Store file record (with git info if available)
+                    file_id = self._store_file_record(file_path, content_hash, file_stats, git_info)
                     
                     # Process document with UserManualChunker
                     chunker = self._get_chunker()
