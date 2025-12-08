@@ -1,9 +1,10 @@
 """
-Batch Ingest Service - Batch processing for document ingestion.
+Bulk Ingest Service - Process multiple documentation files.
 
-This service handles batch ingestion of multiple documentation files with:
+This service handles bulk ingestion of multiple documentation files with:
 - File discovery and pattern matching
-- Progress tracking and resume capability
+- Sequential or parallel processing
+- Progress tracking
 - Validation and error reporting
 - Integration with DocumentIngestService
 """
@@ -12,13 +13,15 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import psutil
 import time
+import threading
 
 
 @dataclass
-class BatchProgress:
+class BulkProgress:
     """Progress tracking for batch operations."""
     total_files: int
     processed: int = 0
@@ -57,12 +60,12 @@ class BatchProgress:
             self.peak_memory_mb = self.memory_usage_mb
 
 
-class BatchIngestService:
-    """Service for batch document ingestion."""
+class BulkIngestService:
+    """Service for bulk document ingestion with optional parallel processing."""
     
     def __init__(self, backend, git_service, ingest_service):
         """
-        Initialize batch ingest service.
+        Initialize bulk ingest service.
         
         Args:
             backend: DatabaseBackend instance
@@ -79,6 +82,9 @@ class BatchIngestService:
         
         # Initialize logger
         self.logger = logging.getLogger(__name__)
+        
+        # Thread lock for progress updates
+        self._progress_lock = threading.Lock()
     
     def discover_files(self, directory: Path, pattern: str = "*.md", 
                       recursive: bool = True) -> List[Path]:
@@ -228,11 +234,11 @@ class BatchIngestService:
         
         return completed_files
     
-    def _process_files_in_chunks(self, files: List[Path], progress: BatchProgress, 
-                                directory: Path, completed_files: set, 
-                                force: bool = False) -> None:
+    def _process_files_sequential(self, files: List[Path], progress: BulkProgress, 
+                                  directory: Path, completed_files: set, 
+                                  force: bool = False) -> None:
         """
-        Process files in configurable chunks for better memory management.
+        Process files sequentially in chunks for better memory management.
         
         Args:
             files: List of files to process
@@ -308,8 +314,84 @@ class BatchIngestService:
                         f"Memory: {progress.memory_usage_mb:.1f}MB"
                     )
     
+    def _process_files_parallel(self, files: List[Path], progress: BulkProgress,
+                               directory: Path, completed_files: set,
+                               force: bool = False, max_workers: int = 4) -> None:
+        """
+        Process files in parallel using ThreadPoolExecutor.
+        
+        Args:
+            files: List of files to process
+            progress: Progress tracking object
+            directory: Base directory for relative path calculation
+            completed_files: Set of already completed files (relative paths)
+            force: Force reprocess existing files
+            max_workers: Number of parallel workers
+        """
+        # Get git info for relative path calculation
+        git_info = self.git_service.detect_repository(directory)
+        
+        # Filter files to process
+        files_to_process = []
+        for file_path in files:
+            # Calculate relative path for database comparison
+            if git_info:
+                relative_path = git_info.get_relative_path(file_path.resolve())
+            else:
+                relative_path = str(file_path)
+            
+            # Skip if already completed (unless force mode)
+            if not force and relative_path in completed_files:
+                with self._progress_lock:
+                    progress.skipped += 1
+                    progress.processed += 1
+                self.logger.debug(f"Skipping already-ingested file: {relative_path}")
+                continue
+            
+            # Validate file before processing
+            validation = self.validate_file(file_path)
+            if not validation['valid']:
+                with self._progress_lock:
+                    progress.processed += 1
+                    progress.failed += 1
+                    progress.errors.append({
+                        'file': str(file_path.absolute()),
+                        'type': 'validation',
+                        'issues': validation['issues']
+                    })
+                continue
+            
+            files_to_process.append(file_path)
+        
+        # Process files in parallel
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_file = {
+                executor.submit(self._process_single_file_with_retry, str(f.absolute()), force, progress): f
+                for f in files_to_process
+            }
+            
+            # Process completed tasks
+            for future in as_completed(future_to_file):
+                file_path = future_to_file[future]
+                try:
+                    future.result()  # This will raise if the task failed
+                except Exception as e:
+                    self.logger.error(f"Unexpected error processing {file_path}: {e}")
+                
+                # Update metrics periodically
+                with self._progress_lock:
+                    if progress.processed % self.config.progress_save_interval == 0:
+                        progress.update_metrics()
+                        self.logger.info(
+                            f"Progress: {progress.progress_percent:.1f}% "
+                            f"({progress.processed}/{progress.total_files}), "
+                            f"Rate: {progress.files_per_second:.1f} files/sec, "
+                            f"Memory: {progress.memory_usage_mb:.1f}MB"
+                        )
+    
     def _process_single_file_with_retry(self, file_path: str, force: bool, 
-                                      progress: BatchProgress) -> None:
+                                      progress: BulkProgress) -> None:
         """
         Process a single file with retry logic.
         
@@ -334,38 +416,43 @@ class BatchIngestService:
         
         try:
             result = process_with_retry()
-            progress.processed += 1
             
-            if result['success']:
-                if result.get('skipped'):
-                    progress.skipped += 1
+            # Thread-safe progress updates
+            with self._progress_lock:
+                progress.processed += 1
+                
+                if result['success']:
+                    if result.get('skipped'):
+                        progress.skipped += 1
+                    else:
+                        progress.succeeded += 1
                 else:
-                    progress.succeeded += 1
-            else:
-                # Record processing error
-                progress.failed += 1
-                progress.errors.append({
-                    'file': file_path,
-                    'type': 'processing',
-                    'error': result.get('error', 'Unknown error')
-                })
+                    # Record processing error
+                    progress.failed += 1
+                    progress.errors.append({
+                        'file': file_path,
+                        'type': 'processing',
+                        'error': result.get('error', 'Unknown error')
+                    })
                 
         except Exception as e:
             # All retries exhausted
-            progress.processed += 1
-            progress.failed += 1
-            progress.errors.append({
-                'file': file_path,
-                'type': 'exception_after_retries',
-                'error': f"Failed after {self.config.max_retry_attempts} attempts: {str(e)}"
-            })
+            with self._progress_lock:
+                progress.processed += 1
+                progress.failed += 1
+                progress.errors.append({
+                    'file': file_path,
+                    'type': 'exception_after_retries',
+                    'error': f"Failed after {self.config.max_retry_attempts} attempts: {str(e)}"
+                })
             self.logger.error(f"Failed to process {file_path} after retries: {e}")
     
 
     
-    def ingest_batch(self, directory: Path, pattern: str = "*.md",
-                    recursive: bool = True, force: bool = False,
-                    dry_run: bool = False) -> BatchProgress:
+    def ingest_bulk(self, directory: Path, pattern: str = "*.md",
+                   recursive: bool = True, force: bool = False,
+                   dry_run: bool = False, parallel: bool = False,
+                   max_workers: int = 4) -> BulkProgress:
         """
         Ingest multiple files with progress tracking.
         
@@ -375,9 +462,11 @@ class BatchIngestService:
             recursive: Search subdirectories
             force: Force reprocess existing files
             dry_run: Validate without processing
+            parallel: Enable parallel processing (default: False for sequential)
+            max_workers: Number of parallel workers (default: 4)
             
         Returns:
-            BatchProgress with results
+            BulkProgress with results
             
         Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5,
                      4.1, 4.2, 4.3, 4.4, 4.5, 5.1, 5.2, 5.3, 5.4, 5.5,
@@ -387,7 +476,7 @@ class BatchIngestService:
         files = self.discover_files(directory, pattern, recursive)
         
         # Initialize progress tracking
-        progress = BatchProgress(total_files=len(files))
+        progress = BulkProgress(total_files=len(files))
         
         # Get already-completed files from database (Requirement 4.1, 4.4)
         # This replaces the JSON progress file approach
@@ -422,17 +511,22 @@ class BatchIngestService:
             
             # Generate error report in dry-run mode too if errors occurred
             if progress.errors:
-                error_report_path = directory / "batch_ingest_errors.json"
+                error_report_path = directory / "bulk_ingest_errors.json"
                 self._generate_error_report(progress.errors, error_report_path)
             
             return progress
         
-        # Process files in chunks with improved memory management and retry logic
-        self._process_files_in_chunks(files, progress, directory, completed_files, force)
+        # Choose processing mode
+        if parallel:
+            self.logger.info(f"Using parallel processing with {max_workers} workers")
+            self._process_files_parallel(files, progress, directory, completed_files, force, max_workers)
+        else:
+            self.logger.info("Using sequential processing")
+            self._process_files_sequential(files, progress, directory, completed_files, force)
         
         # Generate error report if failures occurred (Requirement 6.2)
         if progress.errors:
-            error_report_path = directory / "batch_ingest_errors.json"
+            error_report_path = directory / "bulk_ingest_errors.json"
             self._generate_error_report(progress.errors, error_report_path)
         
         # Generate performance report
@@ -478,7 +572,7 @@ class BatchIngestService:
             # If we can't write the error report, at least don't crash
             pass
     
-    def _generate_performance_report(self, progress: BatchProgress, output_dir: Path):
+    def _generate_performance_report(self, progress: BulkProgress, output_dir: Path):
         """
         Generate performance report file.
         
@@ -515,7 +609,7 @@ class BatchIngestService:
         }
         
         # Write performance report to file
-        output_path = output_dir / "batch_ingest_performance.json"
+        output_path = output_dir / "bulk_ingest_performance.json"
         try:
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(report, f, indent=2)
@@ -523,7 +617,7 @@ class BatchIngestService:
         except IOError as e:
             self.logger.warning(f"Failed to write performance report: {e}")
     
-    def get_processing_metrics(self, progress: BatchProgress) -> Dict[str, Any]:
+    def get_processing_metrics(self, progress: BulkProgress) -> Dict[str, Any]:
         """
         Get current processing metrics.
         

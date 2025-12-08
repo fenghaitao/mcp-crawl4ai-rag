@@ -337,23 +337,29 @@ def egest_python_test(ctx, file_path: str, format: str):
 @click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
 @click.option('--force', '-f', is_flag=True, help='Force reprocess existing files')
 @click.option('--dry-run', is_flag=True, help='Validate files without processing')
+@click.option('--parallel', is_flag=True, help='Enable parallel processing (faster but uses more resources)')
+@click.option('--workers', '-w', type=int, default=4, help='Number of parallel workers (default: 4)')
 @click.pass_context
 @handle_cli_errors
 def ingest_docs_batch(ctx, directory: str, pattern: str, recursive: bool, 
-                      force: bool, dry_run: bool):
-    """Batch ingest multiple documentation files from a directory.
+                      force: bool, dry_run: bool, parallel: bool, workers: int):
+    """Bulk ingest multiple documentation files from a directory.
     
     Automatically skips files already in the database (unless --force is used).
     Uses the database as the source of truth for tracking progress.
+    
+    Processing modes:
+    - Sequential (default): Process files one at a time
+    - Parallel (--parallel): Process multiple files concurrently for faster ingestion
     """
     from ..backends.factory import get_backend
     from ..services.git_service import GitService
     from ..services.document_ingest_service import DocumentIngestService
-    from ..services.batch_ingest_service import BatchIngestService
+    from ..services.bulk_ingest_service import BulkIngestService
     from pathlib import Path
     import time
     
-    verbose_echo(ctx, "Starting batch documentation ingestion...")
+    verbose_echo(ctx, "Starting bulk documentation ingestion...")
     
     dir_path = Path(directory)
     click.echo(f"📁 Directory: {dir_path}")
@@ -361,6 +367,10 @@ def ingest_docs_batch(ctx, directory: str, pattern: str, recursive: bool,
     click.echo(f"📂 Recursive: {'Yes' if recursive else 'No'}")
     click.echo(f"🔄 Force reprocess: {'Yes' if force else 'No'}")
     click.echo(f"🧪 Dry run: {'Yes' if dry_run else 'No'}")
+    if parallel:
+        click.echo(f"⚡ Parallel processing: Yes ({workers} workers)")
+    else:
+        click.echo(f"⚡ Parallel processing: No (sequential)")
     click.echo()
     
     try:
@@ -375,19 +385,22 @@ def ingest_docs_batch(ctx, directory: str, pattern: str, recursive: bool,
         # Create services
         git_service = GitService()
         ingest_service = DocumentIngestService(backend, git_service)
-        batch_service = BatchIngestService(backend, git_service, ingest_service)
+        bulk_service = BulkIngestService(backend, git_service, ingest_service)
         
-        # Start batch ingestion
+        # Start bulk ingestion
         start_time = time.time()
-        click.echo("🚀 Starting batch ingestion...")
+        mode = "parallel" if parallel else "sequential"
+        click.echo(f"🚀 Starting bulk ingestion ({mode} mode)...")
         click.echo()
         
-        progress = batch_service.ingest_batch(
+        progress = bulk_service.ingest_bulk(
             directory=dir_path,
             pattern=pattern,
             recursive=recursive,
             force=force,
-            dry_run=dry_run
+            dry_run=dry_run,
+            parallel=parallel,
+            max_workers=workers
         )
         
         elapsed_time = time.time() - start_time
@@ -395,7 +408,7 @@ def ingest_docs_batch(ctx, directory: str, pattern: str, recursive: bool,
         # Display summary
         click.echo()
         click.echo("=" * 60)
-        click.echo("📊 Batch Ingestion Summary")
+        click.echo("📊 Bulk Ingestion Summary")
         click.echo("=" * 60)
         click.echo(f"Total files discovered: {progress.total_files}")
         click.echo(f"Files processed: {progress.processed}")
@@ -419,7 +432,7 @@ def ingest_docs_batch(ctx, directory: str, pattern: str, recursive: bool,
             if len(progress.errors) > 5:
                 click.echo(f"  ... and {len(progress.errors) - 5} more errors")
             
-            error_report = dir_path / "batch_ingest_errors.json"
+            error_report = dir_path / "bulk_ingest_errors.json"
             if error_report.exists():
                 click.echo(f"\n📄 Full error report: {error_report}")
         
@@ -428,12 +441,12 @@ def ingest_docs_batch(ctx, directory: str, pattern: str, recursive: bool,
         if dry_run:
             click.echo("\n✅ Dry run completed - no files were actually processed")
         elif progress.failed > 0:
-            click.echo("\n⚠️  Batch ingestion completed with errors")
+            click.echo("\n⚠️  Bulk ingestion completed with errors")
         else:
-            click.echo("\n✅ Batch ingestion completed successfully!")
+            click.echo("\n✅ Bulk ingestion completed successfully!")
         
     except Exception as e:
-        click.echo(f"\n❌ Error during batch ingestion: {e}", err=True)
+        click.echo(f"\n❌ Error during bulk ingestion: {e}", err=True)
         raise
 
 
