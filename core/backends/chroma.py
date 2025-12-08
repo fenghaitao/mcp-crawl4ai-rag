@@ -25,30 +25,36 @@ class ChromaBackend(DatabaseBackend):
         except Exception as e:
             raise ConnectionError(f"Failed to initialize ChromaDB client: {e}")
     
+    def _get_minimal_embedding_function(self):
+        """Get the minimal embedding function for metadata collections."""
+        from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
+        
+        class MinimalEmbeddingFunction(EmbeddingFunction):
+            """Minimal embedding function for metadata-only collections."""
+            
+            def __call__(self, input: Documents) -> Embeddings:
+                # Return a single-dimension zero vector for each document
+                # This is the smallest possible embedding ChromaDB accepts
+                return [[0.0] for _ in input]
+        
+        return MinimalEmbeddingFunction()
+    
     def _get_or_create_metadata_collection(self, name: str):
         """
         Get or create a collection for metadata (files, repositories).
         These collections store metadata only and don't need semantic embeddings.
         We use a minimal embedding to save space and computation.
         """
+        embedding_fn = self._get_minimal_embedding_function()
+        
         try:
-            return self._client.get_collection(name)
+            # Try to get existing collection with the embedding function
+            return self._client.get_collection(name, embedding_function=embedding_fn)
         except Exception:
-            # Create collection with a minimal embedding function
-            # This returns a single-dimension zero vector to minimize storage
-            from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
-            
-            class MinimalEmbeddingFunction(EmbeddingFunction):
-                """Minimal embedding function for metadata-only collections."""
-                
-                def __call__(self, input: Documents) -> Embeddings:
-                    # Return a single-dimension zero vector for each document
-                    # This is the smallest possible embedding ChromaDB accepts
-                    return [[0.0] for _ in input]
-            
+            # Create collection with minimal embedding function
             return self._client.create_collection(
                 name=name,
-                embedding_function=MinimalEmbeddingFunction(),
+                embedding_function=embedding_fn,
                 metadata={"hnsw:space": "cosine"}
             )
     
@@ -535,7 +541,11 @@ class ChromaBackend(DatabaseBackend):
                     # Prepare updates for current versions
                     for i, metadata in enumerate(current_files['metadatas']):
                         # Only update if it's not the same file (different ID)
-                        if metadata.get('valid_until') is None and current_files['ids'][i] != str(file_id):
+                        # Current version has valid_until = None or empty string
+                        valid_until = metadata.get('valid_until')
+                        is_current = valid_until is None or valid_until == ''
+                        
+                        if is_current and current_files['ids'][i] != str(file_id):
                             updated_metadata = metadata.copy()
                             updated_metadata['valid_until'] = (
                                 file_version['valid_from'].isoformat() 
