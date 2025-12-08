@@ -607,29 +607,29 @@ def list_files(ctx, repo_url: Optional[str], content_type: Optional[str],
             click.echo(json.dumps(output, indent=2))
         else:
             # Table format
-            click.echo("=" * 130)
+            click.echo("=" * 150)
             click.echo(f"📚 Files List (showing {len(files)} of {total} total)")
-            click.echo("=" * 130)
+            click.echo("=" * 150)
             
             if not files:
                 click.echo("No files found matching the criteria")
             else:
                 # Header
-                click.echo(f"{'ID':<12} {'Repository':<25} {'Path':<30} {'Type':<12} {'Chunks':<8} {'Words':<8}")
-                click.echo("-" * 130)
+                click.echo(f"{'ID':<12} {'Repository URL':<45} {'Path':<30} {'Type':<12} {'Chunks':<8} {'Words':<8}")
+                click.echo("-" * 150)
                 
                 # Rows
                 for f in files:
                     file_id = str(f.get('id', ''))[:11]  # Show more characters for file ID
-                    repo_name = str(f.get('repo_name', 'Unknown'))[:24]
+                    repo_url = str(f.get('repo_url', 'Unknown'))[:44]
                     path = str(f.get('file_path', ''))[:29]  # Adjust path width accordingly
                     content_type = str(f.get('content_type', ''))[:11]
                     chunks = str(f.get('chunk_count', 0))
                     words = str(f.get('word_count', 0))
                     
-                    click.echo(f"{file_id:<12} {repo_name:<25} {path:<30} {content_type:<12} {chunks:<8} {words:<8}")
+                    click.echo(f"{file_id:<12} {repo_url:<45} {path:<30} {content_type:<12} {chunks:<8} {words:<8}")
             
-            click.echo("=" * 130)
+            click.echo("=" * 150)
             
             # Pagination info
             if total > limit:
