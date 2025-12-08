@@ -261,3 +261,34 @@ class DatabaseBackend(ABC):
             Tuple of (file_list, total_count)
         """
         pass
+    
+    @abstractmethod
+    def semantic_search(self, query_text: str, limit: int = 5, 
+                       content_type: Optional[str] = None,
+                       threshold: Optional[float] = None) -> List[Dict[str, Any]]:
+        """
+        Perform semantic search on content chunks using embeddings.
+        
+        Args:
+            query_text: The search query text
+            limit: Maximum number of results to return
+            content_type: Filter by content type (optional)
+            threshold: Minimum similarity threshold (optional)
+            
+        Returns:
+            List of matching chunks with similarity scores
+        """
+        pass
+    
+    @abstractmethod
+    def get_chunks_by_file_id(self, file_id: int) -> List[Dict[str, Any]]:
+        """
+        Get all chunks for a specific file ID ordered by chunk_number.
+        
+        Args:
+            file_id: File version ID
+            
+        Returns:
+            List of chunk dictionaries ordered by chunk_number
+        """
+        pass

@@ -839,3 +839,78 @@ class ChromaBackend(DatabaseBackend):
             logger = logging.getLogger(__name__)
             logger.error(f"Error getting chunks for file ID {file_id}: {e}")
             return []
+    
+    def semantic_search(self, query_text: str, limit: int = 5,
+                       content_type: Optional[str] = None,
+                       threshold: Optional[float] = None) -> List[Dict[str, Any]]:
+        """Perform semantic search on content chunks using embeddings."""
+        import logging
+        import sys
+        import os
+        logger = logging.getLogger(__name__)
+        
+        try:
+            chunks_collection = self._client.get_collection('content_chunks')
+            
+            # Generate query embedding using the same embedding generator
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+            from server.utils import create_embedding
+            
+            query_embedding = create_embedding(query_text)
+            
+            if query_embedding is None:
+                logger.error("Failed to generate query embedding")
+                return []
+            
+            # Build where clause for filtering
+            where_clause = None
+            if content_type:
+                where_clause = {"content_type": content_type}
+            
+            # Perform semantic search using ChromaDB's query method with embedding
+            results = chunks_collection.query(
+                query_embeddings=[query_embedding],
+                n_results=limit,
+                where=where_clause
+            )
+            
+            # Convert ChromaDB format to list of dictionaries
+            search_results = []
+            if results['ids'] and len(results['ids']) > 0:
+                for i in range(len(results['ids'][0])):
+                    # Calculate similarity from distance
+                    # ChromaDB uses squared L2 distance by default (hnsw:space='l2')
+                    # For normalized vectors: L2² = 2 * (1 - cosine_similarity)
+                    # Therefore: cosine_similarity = 1 - (L2² / 2)
+                    distance = results['distances'][0][i] if results.get('distances') else 0
+                    similarity = 1 - (distance / 2)  # Convert squared L2 distance to cosine similarity
+                    
+                    # Apply threshold filter if specified
+                    if threshold is not None and similarity < threshold:
+                        continue
+                    
+                    chunk_data = {
+                        'id': results['ids'][0][i],
+                        'content': results['documents'][0][i] if results.get('documents') else '',
+                        'metadata': results['metadatas'][0][i] if results.get('metadatas') else {},
+                        'similarity': similarity,
+                        'distance': distance
+                    }
+                    
+                    # Add common fields from metadata for easier access
+                    metadata = chunk_data['metadata']
+                    chunk_data['url'] = metadata.get('url', '')
+                    chunk_data['chunk_number'] = metadata.get('chunk_number', 0)
+                    chunk_data['summary'] = metadata.get('summary', '')
+                    chunk_data['file_id'] = metadata.get('file_id', '')
+                    
+                    search_results.append(chunk_data)
+            
+            logger.info(f"Semantic search found {len(search_results)} results for query: {query_text[:50]}...")
+            return search_results
+            
+        except Exception as e:
+            logger.error(f"Error performing semantic search: {e}")
+            import traceback
+            traceback.print_exc()
+            return []

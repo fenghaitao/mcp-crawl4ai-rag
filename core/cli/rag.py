@@ -23,33 +23,112 @@ def rag():
 @rag.command()
 @click.argument('query_text')
 @click.option('--limit', '-l', type=int, default=5, help='Number of results to return')
-@click.option('--threshold', '-t', type=float, default=0.7, 
-              help='Similarity threshold for results')
+@click.option('--threshold', '-t', type=float, default=None, 
+              help='Similarity threshold for results (default: no threshold)')
+@click.option('--content-type', type=click.Choice(['documentation', 'code_dml', 'python_test']),
+              help='Filter by content type')
+@click.option('--json', 'json_output', is_flag=True, help='Output in JSON format')
 @click.pass_context
 @handle_cli_errors
-def query(ctx, query_text: str, limit: int, threshold: float):
-    """Query the RAG system with a text prompt."""
+def query(ctx, query_text: str, limit: int, threshold: Optional[float], content_type: Optional[str], json_output: bool):
+    """Query the RAG system with semantic search."""
+    from ..backends.factory import get_backend
+    import json
+    
     verbose_echo(ctx, f"Querying RAG system: {query_text}")
     
-    click.echo(f"🔍 Query: {query_text}")
-    click.echo(f"📊 Limit: {limit} results")
-    click.echo(f"🎯 Threshold: {threshold}")
+    if not json_output:
+        click.echo(f"🔍 Query: {query_text}")
+        click.echo(f"📊 Limit: {limit} results")
+        if threshold is not None:
+            click.echo(f"🎯 Threshold: {threshold}")
+        if content_type:
+            click.echo(f"📁 Content Type: {content_type}")
+        click.echo()
     
     try:
-        # TODO: Integrate with actual RAG query logic
-        click.echo("🚀 Executing RAG query...")
-        click.echo("📋 This will integrate with the query_rag module")
+        # Get backend
+        backend_name = ctx.obj.get('db_backend')
+        backend = get_backend(backend_name)
         
-        # Placeholder response
-        click.echo("\n📄 Results:")
-        click.echo("1. [Placeholder] Documentation chunk about query topic")
-        click.echo("   Relevance: 0.85")
-        click.echo("   Source: simics-docs/example.md")
+        if not backend.is_connected():
+            click.echo("❌ Database not connected", err=True)
+            return
         
-        click.echo("✅ Query completed successfully!")
+        if not json_output:
+            click.echo("🚀 Executing semantic search...")
+        
+        # Perform semantic search
+        results = backend.semantic_search(
+            query_text=query_text,
+            limit=limit,
+            content_type=content_type,
+            threshold=threshold
+        )
+        
+        if json_output:
+            # JSON output
+            output = {
+                'query': query_text,
+                'limit': limit,
+                'threshold': threshold,
+                'content_type': content_type,
+                'result_count': len(results),
+                'results': [
+                    {
+                        'chunk_id': r.get('id'),
+                        'file_id': r.get('file_id'),
+                        'url': r.get('url', ''),
+                        'chunk_number': r.get('chunk_number', 0),
+                        'similarity': r.get('similarity', 0),
+                        'summary': r.get('summary', ''),
+                        'content_preview': r.get('content', '')[:200] + '...' if len(r.get('content', '')) > 200 else r.get('content', ''),
+                        'metadata': r.get('metadata', {})
+                    }
+                    for r in results
+                ]
+            }
+            click.echo(json.dumps(output, indent=2))
+        else:
+            # Human-readable output
+            if not results:
+                click.echo("📭 No results found matching your query.")
+            else:
+                click.echo(f"\n📄 Found {len(results)} result(s):")
+                click.echo("=" * 80)
+                
+                for i, result in enumerate(results, 1):
+                    click.echo(f"\n🔸 Result #{i}")
+                    click.echo(f"   📊 Similarity: {result.get('similarity', 0):.4f}")
+                    click.echo(f"   📍 Source: {result.get('url', 'Unknown')}")
+                    click.echo(f"   📦 Chunk #{result.get('chunk_number', 'Unknown')}")
+                    
+                    summary = result.get('summary', '')
+                    if summary:
+                        click.echo(f"   📝 Summary: {summary}")
+                    
+                    content = result.get('content', '')
+                    if content:
+                        # Show first 300 characters
+                        if len(content) > 300:
+                            content = content[:300] + "..."
+                        click.echo(f"   📄 Content: {content}")
+                    
+                    metadata = result.get('metadata', {})
+                    if metadata:
+                        # Show relevant metadata fields
+                        relevant_fields = ['title', 'section', 'word_count', 'has_code']
+                        relevant_meta = {k: v for k, v in metadata.items() if k in relevant_fields}
+                        if relevant_meta:
+                            click.echo(f"   🏷️  Metadata: {json.dumps(relevant_meta, indent=6)}")
+                
+                click.echo("\n" + "=" * 80)
+                click.echo(f"✅ Query completed successfully! Found {len(results)} results.")
         
     except Exception as e:
         click.echo(f"❌ Error during query: {e}", err=True)
+        import traceback
+        traceback.print_exc()
         raise
 
 

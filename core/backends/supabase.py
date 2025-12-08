@@ -571,3 +571,102 @@ class SupabaseBackend(DatabaseBackend):
             return files, total_count
         except Exception:
             return [], 0
+    
+    def get_chunks_by_file_id(self, file_id: int) -> List[Dict[str, Any]]:
+        """Get all chunks for a specific file ID ordered by chunk_number."""
+        try:
+            result = self._client.table('content_chunks').select('*').eq('file_id', file_id).order('chunk_number').execute()
+            return result.data if result.data else []
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting chunks for file ID {file_id}: {e}")
+            return []
+    
+    def semantic_search(self, query_text: str, limit: int = 5,
+                       content_type: Optional[str] = None,
+                       threshold: Optional[float] = None) -> List[Dict[str, Any]]:
+        """Perform semantic search on content chunks using embeddings."""
+        import logging
+        import sys
+        import os
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Generate embedding for the query using the same embedding generator
+            sys.path.insert(0, str(Path(__file__).parent.parent.parent / "server"))
+            from utils import create_embedding
+            
+            query_embedding = create_embedding(query_text)
+            
+            if query_embedding is None:
+                logger.error("Failed to generate query embedding")
+                return []
+            
+            # Convert numpy array to list if needed
+            if hasattr(query_embedding, 'tolist'):
+                query_embedding = query_embedding.tolist()
+            
+            # Use Supabase's vector similarity search with RPC function
+            # The match_documents function should be defined in Supabase
+            rpc_params = {
+                'query_embedding': query_embedding,
+                'match_count': limit
+            }
+            
+            # Add content_type filter if specified
+            if content_type:
+                rpc_params['filter_content_type'] = content_type
+            
+            # Try to use the RPC function for vector search
+            try:
+                result = self._client.rpc('match_content_chunks', rpc_params).execute()
+                search_results = result.data if result.data else []
+            except Exception as rpc_error:
+                logger.warning(f"RPC function not available, falling back to client-side search: {rpc_error}")
+                # Fallback: fetch chunks and compute similarity client-side
+                query = self._client.table('content_chunks').select('*')
+                if content_type:
+                    query = query.eq('content_type', content_type)
+                result = query.limit(1000).execute()  # Limit to prevent memory issues
+                
+                if not result.data:
+                    return []
+                
+                # Compute cosine similarity client-side
+                import numpy as np
+                query_vec = np.array(query_embedding)
+                
+                search_results = []
+                for chunk in result.data:
+                    if chunk.get('embedding'):
+                        chunk_vec = np.array(chunk['embedding'])
+                        # Cosine similarity
+                        similarity = np.dot(query_vec, chunk_vec) / (np.linalg.norm(query_vec) * np.linalg.norm(chunk_vec))
+                        
+                        # Apply threshold filter if specified
+                        if threshold is not None and similarity < threshold:
+                            continue
+                        
+                        chunk['similarity'] = float(similarity)
+                        search_results.append(chunk)
+                
+                # Sort by similarity and take top results
+                search_results.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+                search_results = search_results[:limit]
+            
+            # Normalize result format
+            for result in search_results:
+                # Ensure common fields are accessible
+                if 'metadata' in result and isinstance(result['metadata'], dict):
+                    result['url'] = result.get('url', result['metadata'].get('url', ''))
+                    result['summary'] = result.get('summary', result['metadata'].get('summary', ''))
+            
+            logger.info(f"Semantic search found {len(search_results)} results for query: {query_text[:50]}...")
+            return search_results
+            
+        except Exception as e:
+            logger.error(f"Error performing semantic search: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
