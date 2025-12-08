@@ -249,6 +249,9 @@ def list_all(ctx, table: str, limit: int, full_content: bool, order_by: str):
                                 if result['metadatas'] and i < len(result['metadatas']):
                                     metadata = result['metadatas'][i]
                                     for key, value in metadata.items():
+                                        # Skip 'id' field since we already show it as document ID
+                                        if key == 'id':
+                                            continue
                                         # Show summary preview unless full_content is requested
                                         if key == 'summary' and value and not full_content:
                                             click.echo(f"  {key}: {value[:80]}..." if len(str(value)) > 80 else f"  {key}: {value}")
