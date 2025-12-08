@@ -606,36 +606,40 @@ def list_files(ctx, repo_url: Optional[str], content_type: Optional[str],
             }
             click.echo(json.dumps(output, indent=2))
         else:
-            # Table format
-            click.echo("=" * 150)
-            click.echo(f"📚 Files List (showing {len(files)} of {total} total)")
-            click.echo("=" * 150)
+            # List format
+            click.echo(f"\n📚 Files List (showing {len(files)} of {total} total)")
+            click.echo("=" * 80)
             
             if not files:
                 click.echo("No files found matching the criteria")
             else:
-                # Header
-                click.echo(f"{'ID':<12} {'Repository URL':<45} {'Path':<30} {'Type':<12} {'Chunks':<8} {'Words':<8}")
-                click.echo("-" * 150)
-                
-                # Rows
-                for f in files:
-                    file_id = str(f.get('id', ''))[:11]  # Show more characters for file ID
-                    repo_url = str(f.get('repo_url', 'Unknown'))[:44]
-                    path = str(f.get('file_path', ''))[:29]  # Adjust path width accordingly
-                    content_type = str(f.get('content_type', ''))[:11]
-                    chunks = str(f.get('chunk_count', 0))
-                    words = str(f.get('word_count', 0))
+                for i, f in enumerate(files, 1):
+                    click.echo(f"\n📄 File {i}:")
+                    click.echo(f"  ID: {f.get('id', 'Unknown')}")
+                    click.echo(f"  Repository: {f.get('repo_url', 'Unknown')}")
+                    click.echo(f"  Path: {f.get('file_path', 'Unknown')}")
+                    click.echo(f"  Type: {f.get('content_type', 'Unknown')}")
+                    click.echo(f"  Chunks: {f.get('chunk_count', 0)}")
+                    click.echo(f"  Words: {f.get('word_count', 0)}")
+                    click.echo(f"  Commit: {f.get('commit_sha', 'Unknown')}")
                     
-                    click.echo(f"{file_id:<12} {repo_url:<45} {path:<30} {content_type:<12} {chunks:<8} {words:<8}")
+                    # Show temporal info if available
+                    valid_from = f.get('valid_from')
+                    valid_until = f.get('valid_until')
+                    if valid_from:
+                        click.echo(f"  Valid From: {valid_from}")
+                    if valid_until:
+                        click.echo(f"  Valid Until: {valid_until}")
+                    elif valid_from:
+                        click.echo(f"  Valid Until: Current")
             
-            click.echo("=" * 150)
+            click.echo("\n" + "=" * 80)
             
             # Pagination info
             if total > limit:
                 pages = (total + limit - 1) // limit
                 current_page = (offset // limit) + 1
-                click.echo(f"\nPage {current_page} of {pages} | Use --offset and --limit for pagination")
+                click.echo(f"Page {current_page} of {pages} | Use --offset and --limit for pagination")
         
     except Exception as e:
         click.echo(f"❌ Error listing files: {e}", err=True)
