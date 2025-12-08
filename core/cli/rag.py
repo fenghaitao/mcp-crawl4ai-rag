@@ -417,9 +417,9 @@ def query_file(ctx, repo_url: str, file_path: str, commit: Optional[str],
                 'word_count': result.get('word_count'),
                 'chunk_count': result.get('chunk_count'),
                 'content_type': result.get('content_type'),
-                'valid_from': result.get('valid_from').isoformat() if result.get('valid_from') else None,
-                'valid_until': result.get('valid_until').isoformat() if result.get('valid_until') else None,
-                'ingested_at': result.get('ingested_at').isoformat() if result.get('ingested_at') else None
+                'valid_from': result.get('valid_from') if isinstance(result.get('valid_from'), str) else (result.get('valid_from').isoformat() if result.get('valid_from') else None),
+                'valid_until': result.get('valid_until') if isinstance(result.get('valid_until'), str) else (result.get('valid_until').isoformat() if result.get('valid_until') else None),
+                'ingested_at': result.get('ingested_at') if isinstance(result.get('ingested_at'), str) else (result.get('ingested_at').isoformat() if result.get('ingested_at') else None)
             }
             click.echo(json.dumps(output, indent=2))
         else:
@@ -622,8 +622,8 @@ def file_history(ctx, repo_url: str, file_path: str, limit: int, json_output: bo
                     {
                         'file_id': v.get('id'),
                         'commit_sha': v.get('commit_sha'),
-                        'valid_from': v.get('valid_from').isoformat() if v.get('valid_from') else None,
-                        'valid_until': v.get('valid_until').isoformat() if v.get('valid_until') else None,
+                        'valid_from': v.get('valid_from') if isinstance(v.get('valid_from'), str) else (v.get('valid_from').isoformat() if v.get('valid_from') else None),
+                        'valid_until': v.get('valid_until') if isinstance(v.get('valid_until'), str) else (v.get('valid_until').isoformat() if v.get('valid_until') else None),
                         'word_count': v.get('word_count'),
                         'chunk_count': v.get('chunk_count'),
                         'content_hash': v.get('content_hash')
