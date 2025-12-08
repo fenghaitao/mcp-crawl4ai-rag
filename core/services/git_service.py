@@ -154,3 +154,49 @@ class GitService:
             raise GitRepositoryError(
                 f"File {file_path} is not within repository {repo_root}: {e}"
             )
+    
+    def check_file_committed(self, file_path: Path) -> tuple[bool, str]:
+        """
+        Check if a file has uncommitted changes.
+        
+        Args:
+            file_path: Path to file
+            
+        Returns:
+            Tuple of (is_clean, message)
+            - is_clean: True if file is committed, False if has uncommitted changes
+            - message: Description of the status
+        """
+        try:
+            # Search for git repository
+            search_path = file_path if file_path.is_dir() else file_path.parent
+            repo = self.git.Repo(search_path, search_parent_directories=True)
+            
+            # Get relative path from repo root
+            repo_root = Path(repo.working_dir)
+            rel_path = str(file_path.resolve().relative_to(repo_root))
+            
+            # Check if file is tracked
+            try:
+                repo.git.ls_files('--error-unmatch', rel_path)
+            except Exception:
+                return False, f"File '{rel_path}' is not tracked by git"
+            
+            # Check for uncommitted changes
+            # This includes both staged and unstaged changes
+            diff_index = repo.index.diff(None)  # Unstaged changes
+            diff_head = repo.index.diff('HEAD')  # Staged changes
+            
+            for diff in list(diff_index) + list(diff_head):
+                if diff.a_path == rel_path or diff.b_path == rel_path:
+                    return False, f"File '{rel_path}' has uncommitted changes"
+            
+            return True, f"File '{rel_path}' is committed"
+            
+        except self.git.InvalidGitRepositoryError:
+            # Not in a git repo, so no git restrictions
+            return True, "File not in git repository"
+        except Exception as e:
+            logger.warning(f"Error checking git status for {file_path}: {e}")
+            # If we can't check, allow it
+            return True, f"Could not check git status: {e}"
