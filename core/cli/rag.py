@@ -519,18 +519,18 @@ def list_files(ctx, repo_url: Optional[str], content_type: Optional[str],
                 click.echo("No files found matching the criteria")
             else:
                 # Header
-                click.echo(f"{'ID':<8} {'Path':<40} {'Type':<15} {'Chunks':<8} {'Words':<10}")
+                click.echo(f"{'ID':<12} {'Path':<36} {'Type':<15} {'Chunks':<8} {'Words':<10}")
                 click.echo("-" * 100)
                 
                 # Rows
                 for f in files:
-                    file_id = str(f.get('id', ''))[:7]
-                    path = str(f.get('file_path', ''))[:39]
+                    file_id = str(f.get('id', ''))[:11]  # Show more characters for file ID
+                    path = str(f.get('file_path', ''))[:35]  # Adjust path width accordingly
                     content_type = str(f.get('content_type', ''))[:14]
                     chunks = str(f.get('chunk_count', 0))
                     words = str(f.get('word_count', 0))
                     
-                    click.echo(f"{file_id:<8} {path:<40} {content_type:<15} {chunks:<8} {words:<10}")
+                    click.echo(f"{file_id:<12} {path:<36} {content_type:<15} {chunks:<8} {words:<10}")
             
             click.echo("=" * 100)
             

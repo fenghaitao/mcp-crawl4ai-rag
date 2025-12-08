@@ -48,15 +48,24 @@ class ChromaBackend(DatabaseBackend):
         embedding_fn = self._get_minimal_embedding_function()
         
         try:
-            # Try to get existing collection with the embedding function
-            return self._client.get_collection(name, embedding_function=embedding_fn)
+            # Try to get existing collection first (without specifying embedding function)
+            return self._client.get_collection(name)
         except Exception:
-            # Create collection with minimal embedding function
-            return self._client.create_collection(
-                name=name,
-                embedding_function=embedding_fn,
-                metadata={"hnsw:space": "cosine"}
-            )
+            # Collection doesn't exist, try to create it
+            try:
+                return self._client.create_collection(
+                    name=name,
+                    embedding_function=embedding_fn,
+                    metadata={"hnsw:space": "cosine"}
+                )
+            except Exception as create_error:
+                # If creation fails, try to get without embedding function again
+                # (collection might have been created by another process)
+                try:
+                    return self._client.get_collection(name)
+                except Exception:
+                    # Re-raise the original create error
+                    raise create_error
     
     def get_stats(self) -> Dict[str, Any]:
         """Get ChromaDB statistics."""
@@ -790,3 +799,43 @@ class ChromaBackend(DatabaseBackend):
             return paginated_files, total_count
         except Exception:
             return [], 0
+    
+    def get_chunks_by_file_id(self, file_id: int) -> List[Dict[str, Any]]:
+        """Get all chunks for a specific file ID ordered by chunk_number."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            chunks_collection = self._client.get_collection('content_chunks')
+            
+            logger.debug(f"Searching for chunks with file_id: {file_id} (type: {type(file_id)})")
+            
+            # Query chunks by file_id (keep as integer to match stored type)
+            results = chunks_collection.get(
+                where={"file_id": file_id}
+            )
+            
+            logger.debug(f"Found {len(results['ids'])} chunks for file_id {file_id}")
+            
+            # Convert ChromaDB format to list of dictionaries
+            chunks = []
+            for i, chunk_id in enumerate(results['ids']):
+                chunk_data = {
+                    'id': chunk_id,
+                    'content': results['documents'][i] if i < len(results['documents']) else '',
+                    'metadata': results['metadatas'][i] if i < len(results['metadatas']) else {},
+                    'chunk_number': results['metadatas'][i].get('chunk_number', i) if i < len(results['metadatas']) else i,
+                    'summary': results['metadatas'][i].get('summary', '') if i < len(results['metadatas']) else ''
+                }
+                chunks.append(chunk_data)
+            
+            # Sort by chunk_number
+            chunks = sorted(chunks, key=lambda x: x.get('chunk_number', 0))
+            
+            return chunks
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting chunks for file ID {file_id}: {e}")
+            return []
