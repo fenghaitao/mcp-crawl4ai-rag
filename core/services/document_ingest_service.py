@@ -121,46 +121,123 @@ class DocumentIngestService:
         """
         Ingest a single document file into the RAG system.
         
+        Content-based versioning: Only creates new versions when content actually changes.
+        - Without force: Skips if content unchanged
+        - With force: Re-processes chunks (regenerates summaries/embeddings)
+        
         Returns:
             Dict with success status, file_id, chunks_created, word_count, processing_time, error
         """
         start_time = time.time()
         
         try:
+            # Check for uncommitted changes if git_service is available
+            if self.git_service:
+                is_committed, message = self.git_service.check_file_committed(Path(file_path))
+                if not is_committed:
+                    return {
+                        'success': False,
+                        'error': f'Cannot ingest file with uncommitted changes: {message}',
+                        'processing_time': time.time() - start_time
+                    }
+            
             # Detect git repository if git_service is available
             git_info = None
+            repo_id = None
+            relative_path = file_path
+            
             if self.git_service:
                 git_info = self.git_service.detect_repository(Path(file_path))
+                if git_info:
+                    # Get or create repository record
+                    repo = self.backend.get_repository(git_info.repo_url)
+                    if not repo:
+                        repo_name = git_info.repo_url.split('/')[-1].replace('.git', '')
+                        repo_id = self.backend.store_repository(git_info.repo_url, repo_name)
+                    else:
+                        repo_id = repo['id']
+                        self.backend.update_repository_last_ingested(repo_id)
+                    
+                    # Get relative path from git root
+                    abs_file_path = Path(file_path).resolve()
+                    relative_path = git_info.get_relative_path(abs_file_path)
             
             # Calculate file hash for change detection
             content_hash = self._calculate_file_hash(file_path)
             file_stats = self._get_file_stats(file_path)
             
-            # Check if file already processed (unless force)
-            if not force_reprocess:
-                existing = self._check_existing_file(file_path, content_hash)
-                if existing:
+            # Check for existing version with same content (content-based versioning)
+            existing_current = None
+            if git_info and repo_id:
+                # For git-tracked files, check current version by repo_id and path
+                existing_current = self.backend.get_current_file(repo_id, relative_path)
+            else:
+                # For non-git files, check by file path and hash
+                existing_current = self._check_existing_file(file_path, content_hash)
+            
+            # Content-based versioning logic
+            if existing_current and existing_current.get('content_hash') == content_hash:
+                # Content unchanged!
+                if force_reprocess:
+                    # Force: Re-process chunks (regenerate summaries/embeddings)
+                    # Keep the same file_id but regenerate chunks
+                    file_id = existing_current['id']
+                    
+                    # Remove old chunks only (not the file record)
+                    try:
+                        # Get chunks collection and remove chunks for this file
+                        chunks_collection = self.backend._client.get_or_create_collection('content_chunks')
+                        chunk_results = chunks_collection.get(where={"file_id": str(file_id)})
+                        if chunk_results['ids']:
+                            chunks_collection.delete(ids=chunk_results['ids'])
+                    except Exception:
+                        # If chunk removal fails, continue anyway
+                        pass
+                    
+                    # Process document with UserManualChunker
+                    chunker = self._get_chunker()
+                    generate_summaries = os.getenv("MANUAL_GENERATE_SUMMARIES", "true").lower() == "true"
+                    
+                    chunks = chunker.process_document(
+                        file_path,
+                        generate_embeddings=True,
+                        generate_summaries=generate_summaries
+                    )
+                    
+                    # Store new chunks
+                    stats = self._store_chunks(file_id, chunks, relative_path if git_info else file_path)
+                    
+                    processing_time = time.time() - start_time
+                    
                     return {
                         'success': True,
-                        'file_id': existing['id'],
-                        'chunks_created': existing['chunk_count'],
-                        'word_count': existing['word_count'],
+                        'file_id': file_id,
+                        'chunks_created': stats['chunks'],
+                        'word_count': stats['words'],
+                        'processing_time': processing_time,
+                        'reprocessed': True,
+                        'reason': 'Content unchanged - re-processed with force flag'
+                    }
+                else:
+                    # No force: Skip entirely
+                    return {
+                        'success': True,
+                        'file_id': existing_current['id'],
+                        'chunks_created': existing_current.get('chunk_count', 0),
+                        'word_count': existing_current.get('word_count', 0),
                         'processing_time': time.time() - start_time,
                         'skipped': True,
-                        'reason': 'File already processed with same content'
+                        'reason': 'Content unchanged - skipped'
                     }
             
-            # Remove existing data if force reprocessing
-            if force_reprocess:
-                self._remove_existing_file_data(file_path)
+            # Content changed or new file: Create new version
+            # DO NOT remove existing data - temporal versioning keeps all versions
             
             # Store file record (with git info if available)
             file_id = self._store_file_record(file_path, content_hash, file_stats, git_info)
             
             # Process document with UserManualChunker
             chunker = self._get_chunker()
-            
-            # Read settings from environment
             generate_summaries = os.getenv("MANUAL_GENERATE_SUMMARIES", "true").lower() == "true"
             
             chunks = chunker.process_document(
@@ -170,7 +247,7 @@ class DocumentIngestService:
             )
             
             # Store chunks in database
-            stats = self._store_chunks(file_id, chunks, file_path)
+            stats = self._store_chunks(file_id, chunks, relative_path if git_info else file_path)
             
             processing_time = time.time() - start_time
             
@@ -179,7 +256,8 @@ class DocumentIngestService:
                 'file_id': file_id,
                 'chunks_created': stats['chunks'],
                 'word_count': stats['words'],
-                'processing_time': processing_time
+                'processing_time': processing_time,
+                'new_version': True
             }
             
         except Exception as e:

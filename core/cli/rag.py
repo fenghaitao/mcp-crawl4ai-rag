@@ -119,7 +119,7 @@ def ingest_python_test(ctx, file_path: str, force: bool):
 
 @rag.command()
 @click.argument('file_path', type=click.Path(exists=True))
-@click.option('--force', '-f', is_flag=True, help='Force re-processing: egest existing data and re-ingest')
+@click.option('--force', '-f', is_flag=True, help='Force re-processing when content unchanged (regenerate summaries/embeddings)')
 @click.pass_context
 @handle_cli_errors
 def ingest_doc(ctx, file_path: str, force: bool):
@@ -152,13 +152,22 @@ def ingest_doc(ctx, file_path: str, force: bool):
         # Display results
         if result['success']:
             if result.get('skipped', False):
-                click.echo("⏭️  File already exists in database - skipped!")
+                click.echo("⏭️  Content unchanged - skipped!")
                 click.echo(f"📊 Existing file details:")
                 click.echo(f"  - File ID: {result['file_id']}")
                 click.echo(f"  - Chunks: {result['chunks_created']}")
                 click.echo(f"  - Word count: {result['word_count']}")
-                click.echo(f"  - Reason: {result.get('reason', 'File unchanged')}")
+                click.echo(f"  - Reason: {result.get('reason', 'Content unchanged')}")
                 click.echo(f"  - Check time: {result['processing_time']:.2f}s")
+                click.echo(f"\n💡 Tip: Use -f to force re-processing (regenerate summaries/embeddings)")
+            elif result.get('reprocessed', False):
+                click.echo("🔄 Content unchanged - re-processed with force flag!")
+                click.echo(f"📊 Results:")
+                click.echo(f"  - File ID: {result['file_id']}")
+                click.echo(f"  - Chunks re-created: {result['chunks_created']}")
+                click.echo(f"  - Word count: {result['word_count']}")
+                click.echo(f"  - Processing time: {result['processing_time']:.2f}s")
+                click.echo(f"  - Reason: {result.get('reason', 'Re-processed')}")
             else:
                 click.echo("✅ Documentation file ingestion completed successfully!")
                 click.echo(f"📊 Results:")
@@ -166,6 +175,8 @@ def ingest_doc(ctx, file_path: str, force: bool):
                 click.echo(f"  - Chunks created: {result['chunks_created']}")
                 click.echo(f"  - Word count: {result['word_count']}")
                 click.echo(f"  - Processing time: {result['processing_time']:.2f}s")
+                if result.get('new_version'):
+                    click.echo(f"  - Status: New version created (content changed)")
         else:
             click.echo(f"❌ Ingestion failed: {result['error']}", err=True)
             raise Exception(result['error'])
