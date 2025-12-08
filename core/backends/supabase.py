@@ -6,6 +6,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from contextlib import contextmanager
 
 from .base import DatabaseBackend
 
@@ -15,6 +16,7 @@ class SupabaseBackend(DatabaseBackend):
     
     def __init__(self):
         self._client = None
+        self._pg_client = None  # Direct PostgreSQL client for transactions
         self._initialize_client()
     
     def _initialize_client(self):
@@ -82,6 +84,26 @@ class SupabaseBackend(DatabaseBackend):
     def is_connected(self) -> bool:
         """Check if Supabase connection is active."""
         return self._client is not None
+    
+    @contextmanager
+    def transaction(self):
+        """
+        Context manager for database transactions.
+        
+        Note: Supabase Python client doesn't directly support transactions.
+        For now, this is a compatibility layer. True transaction support
+        would require using psycopg2 directly with the connection string.
+        
+        TODO: Implement proper PostgreSQL transactions using psycopg2
+        """
+        try:
+            yield self
+        except Exception as e:
+            # Log the error
+            import logging
+            logging.getLogger(__name__).error(f"Transaction failed: {e}")
+            # In a real implementation, we would rollback here
+            raise
     
     def get_backend_name(self) -> str:
         """Get backend name."""

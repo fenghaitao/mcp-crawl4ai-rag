@@ -5,6 +5,7 @@ Abstract base classes for database backends.
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+from contextlib import contextmanager
 import os
 
 
@@ -14,6 +15,23 @@ class DatabaseBackend(ABC):
     @abstractmethod
     def get_stats(self) -> Dict[str, Any]:
         """Get database statistics and information."""
+        pass
+    
+    @abstractmethod
+    @contextmanager
+    def transaction(self):
+        """
+        Context manager for database transactions.
+        
+        Usage:
+            with backend.transaction():
+                backend.store_file_version(...)
+                backend.store_chunks(...)
+                # If any operation fails, transaction is rolled back
+        
+        Note: ChromaDB doesn't support transactions, so this is best-effort.
+        Supabase/PostgreSQL supports full ACID transactions.
+        """
         pass
     
     @abstractmethod

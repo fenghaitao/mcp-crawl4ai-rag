@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from .base import DatabaseBackend
+from contextlib import contextmanager
 
 
 class ChromaBackend(DatabaseBackend):
@@ -100,6 +101,24 @@ class ChromaBackend(DatabaseBackend):
             return True
         except Exception:
             return False
+    
+    @contextmanager
+    def transaction(self):
+        """
+        Context manager for transactions.
+        
+        Note: ChromaDB doesn't support true transactions.
+        This is a no-op for API compatibility with Supabase backend.
+        Operations are executed immediately and cannot be rolled back.
+        """
+        try:
+            yield self
+        except Exception as e:
+            # ChromaDB doesn't support rollback
+            # Log the error and re-raise
+            import logging
+            logging.getLogger(__name__).error(f"Operation failed (no rollback available): {e}")
+            raise
     
     def get_backend_name(self) -> str:
         """Get backend name."""
