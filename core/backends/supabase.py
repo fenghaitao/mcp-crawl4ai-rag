@@ -366,18 +366,61 @@ class SupabaseBackend(DatabaseBackend):
             return None
     
     def remove_file_data(self, file_path: str) -> bool:
-        """Remove existing file and its chunks from database."""
+        """Remove existing file and its chunks from database.
+        
+        Removes ALL versions of the file matching the given path.
+        """
         try:
-            # Get file record
+            # Get all file records matching this path
             file_result = self._client.table('files').select('id').eq('file_path', file_path).execute()
             if file_result.data:
-                file_id = file_result.data[0]['id']
+                # Delete chunks for all file versions (foreign key constraint)
+                for file_record in file_result.data:
+                    file_id = file_record['id']
+                    self._client.table('content_chunks').delete().eq('file_id', file_id).execute()
                 
-                # Delete content_chunks first (foreign key constraint)
+                # Delete all file records matching this path
+                self._client.table('files').delete().eq('file_path', file_path).execute()
+            return True
+        except Exception:
+            return False
+    
+    def remove_file_version(self, file_path: str, commit_sha: str) -> bool:
+        """Remove a specific version of a file by commit SHA.
+        
+        Args:
+            file_path: Path to the file
+            commit_sha: Full or partial commit SHA (will match prefix)
+        """
+        try:
+            # Get file records matching path and commit
+            file_result = (
+                self._client.table('files')
+                .select('id, commit_sha')
+                .eq('file_path', file_path)
+                .execute()
+            )
+            
+            if not file_result.data:
+                return False
+            
+            # Find matching commit(s)
+            matching_ids = [
+                f['id'] for f in file_result.data 
+                if f['commit_sha'].startswith(commit_sha)
+            ]
+            
+            if not matching_ids:
+                return False
+            
+            # Delete chunks for matching versions
+            for file_id in matching_ids:
                 self._client.table('content_chunks').delete().eq('file_id', file_id).execute()
-                
-                # Delete file record
+            
+            # Delete matching file records
+            for file_id in matching_ids:
                 self._client.table('files').delete().eq('id', file_id).execute()
+            
             return True
         except Exception:
             return False

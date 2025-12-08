@@ -76,6 +76,21 @@ class DatabaseBackend(ABC):
     def remove_file_data(self, file_path: str) -> bool:
         """
         Remove existing file and its chunks from database.
+        Removes ALL versions of the file.
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        pass
+    
+    @abstractmethod
+    def remove_file_version(self, file_path: str, commit_sha: str) -> bool:
+        """
+        Remove a specific version of a file by commit SHA.
+        
+        Args:
+            file_path: Path to the file
+            commit_sha: Full or partial commit SHA (will match prefix)
         
         Returns:
             True if successful, False otherwise

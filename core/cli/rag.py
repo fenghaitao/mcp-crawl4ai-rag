@@ -804,16 +804,24 @@ def list_chunks(ctx, file_id: int, json_output: bool):
 
 @rag.command()
 @click.argument('file_path', type=click.Path())
+@click.option('--commit', help='Remove only this specific commit version (default: remove all versions)')
 @click.option('--confirm', '-c', is_flag=True, help='Skip confirmation prompt')
 @click.pass_context
 @handle_cli_errors
-def egest_doc(ctx, file_path: str, confirm: bool):
-    """Remove a documentation file and its chunks from the database."""
+def egest_doc(ctx, file_path: str, commit: Optional[str], confirm: bool):
+    """Remove a documentation file and its chunks from the database.
+    
+    By default, removes ALL versions of the file. Use --commit to remove only a specific version.
+    """
     from ..backends.factory import get_backend
+    from ..services.git_service import GitService
+    from pathlib import Path
     
     verbose_echo(ctx, "Removing documentation file from database...")
     
     click.echo(f"📄 Documentation file: {file_path}")
+    if commit:
+        click.echo(f"🔖 Commit filter: {commit}")
     
     try:
         # Get backend
@@ -824,49 +832,114 @@ def egest_doc(ctx, file_path: str, confirm: bool):
             click.echo("❌ Database not connected", err=True)
             return
         
-        # Check if file exists in database with current hash
-        try:
-            from .utils import calculate_file_hash
-            file_hash = calculate_file_hash(file_path)
-            existing = backend.check_file_exists(file_path, file_hash)
-        except FileNotFoundError:
-            click.echo(f"❌ File not found: {file_path}", err=True)
-            return
-        except Exception as e:
-            click.echo(f"❌ Error reading file: {e}", err=True)
-            return
+        # Normalize file path using git service (same as ingest)
+        git_service = GitService()
+        git_info = git_service.detect_repository(Path(file_path))
         
-        if not existing:
+        normalized_path = file_path
+        repo_id = None
+        
+        if git_info:
+            # Get relative path from git root (same as ingest does)
+            abs_file_path = Path(file_path).resolve()
+            normalized_path = git_info.get_relative_path(abs_file_path)
+            
+            # Get repository ID
+            repo = backend.get_repository(git_info.repo_url)
+            if repo:
+                repo_id = repo['id']
+        
+        # Get all versions of this file
+        all_versions = []
+        if repo_id:
+            all_versions = backend.get_file_history(repo_id, normalized_path, limit=1000)
+        
+        if not all_versions:
+            # Fallback: check if current version exists
+            try:
+                from .utils import calculate_file_hash
+                file_hash = calculate_file_hash(file_path)
+                existing = backend.check_file_exists(normalized_path, file_hash)
+                if existing:
+                    all_versions = [existing]
+            except FileNotFoundError:
+                click.echo(f"❌ File not found: {file_path}", err=True)
+                return
+            except Exception as e:
+                click.echo(f"❌ Error reading file: {e}", err=True)
+                return
+        
+        if not all_versions:
             click.echo(f"⚠️  File not found in database:")
-            click.echo(f"   - Path: {file_path}")
-            click.echo(f"   - Current hash: {file_hash[:16]}...")
+            click.echo(f"   - Path: {normalized_path}")
             click.echo(f"   - File may have been modified or never ingested")
             return
         
+        # Filter by commit if specified
+        versions_to_remove = all_versions
+        if commit:
+            versions_to_remove = [v for v in all_versions if v.get('commit_sha', '').startswith(commit)]
+            if not versions_to_remove:
+                click.echo(f"❌ No version found for commit: {commit}")
+                click.echo(f"\n📜 Available commits:")
+                for v in all_versions[:10]:
+                    commit_sha = v.get('commit_sha', 'Unknown')
+                    valid_from = str(v.get('valid_from', 'Unknown'))[:19]
+                    click.echo(f"   - {commit_sha[:8]} from {valid_from}")
+                return
+        
+        # Calculate totals across versions to remove
+        total_chunks = sum(v.get('chunk_count', 0) for v in versions_to_remove)
+        total_words = sum(v.get('word_count', 0) for v in versions_to_remove)
+        
         # Confirmation prompt unless --confirm flag is used
         if not confirm:
-            click.echo(f"⚠️  This will permanently remove:")
-            click.echo(f"   - File record: {file_path}")
-            click.echo(f"   - File ID: {existing['id']}")
-            click.echo(f"   - {existing['chunk_count']} chunks and embeddings")
-            click.echo(f"   - {existing['word_count']} words of processed content")
-            click.echo(f"   - Content hash: {file_hash[:16]}...")
+            if commit:
+                click.echo(f"⚠️  This will permanently remove specific version:")
+                click.echo(f"   - File path: {normalized_path}")
+                click.echo(f"   - Commit: {versions_to_remove[0].get('commit_sha', 'Unknown')[:8]}")
+                click.echo(f"   - Chunks: {total_chunks}")
+                click.echo(f"   - Words: {total_words}")
+            else:
+                click.echo(f"⚠️  This will permanently remove ALL versions:")
+                click.echo(f"   - File path: {normalized_path}")
+                click.echo(f"   - Total versions: {len(versions_to_remove)}")
+                click.echo(f"   - Total chunks: {total_chunks}")
+                click.echo(f"   - Total words: {total_words}")
+                
+                if len(versions_to_remove) > 1:
+                    click.echo(f"\n   📜 Version history:")
+                    for i, v in enumerate(versions_to_remove[:5], 1):  # Show first 5
+                        commit_sha = str(v.get('commit_sha', 'Unknown'))[:8]
+                        valid_from = str(v.get('valid_from', 'Unknown'))[:19]
+                        click.echo(f"      {i}. Commit {commit_sha} from {valid_from} ({v.get('chunk_count', 0)} chunks)")
+                    if len(versions_to_remove) > 5:
+                        click.echo(f"      ... and {len(versions_to_remove) - 5} more versions")
             
-            if not click.confirm("Are you sure you want to proceed?"):
+            if not click.confirm("\nAre you sure you want to proceed?"):
                 click.echo("❌ Operation cancelled")
                 return
         
-        click.echo("🗑️  Removing file from database...")
-        
-        # Remove file and its chunks using backend interface
-        success = backend.remove_file_data(file_path)
+        # Remove based on whether we're removing all or specific version
+        if commit:
+            click.echo(f"🗑️  Removing specific version from database...")
+            # Remove specific version by commit
+            success = backend.remove_file_version(normalized_path, commit)
+        else:
+            click.echo(f"🗑️  Removing all versions from database...")
+            # Remove all versions
+            success = backend.remove_file_data(normalized_path)
         
         if success:
             click.echo("✅ Documentation file removed successfully!")
             click.echo(f"📊 Removed:")
-            click.echo(f"  - File record: {file_path}")
-            click.echo(f"  - All associated chunks")
-            click.echo(f"  - All embeddings and metadata")
+            click.echo(f"  - File path: {normalized_path}")
+            if commit:
+                click.echo(f"  - Commit: {commit}")
+            else:
+                click.echo(f"  - Versions removed: {len(versions_to_remove)}")
+            click.echo(f"  - Total chunks: {total_chunks}")
+            click.echo(f"  - Total words: {total_words}")
         else:
             click.echo("⚠️  File not found in database or already removed")
         

@@ -25,47 +25,21 @@ class ChromaBackend(DatabaseBackend):
         except Exception as e:
             raise ConnectionError(f"Failed to initialize ChromaDB client: {e}")
     
-    def _get_minimal_embedding_function(self):
-        """Get the minimal embedding function for metadata collections."""
-        from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
-        
-        class MinimalEmbeddingFunction(EmbeddingFunction):
-            """Minimal embedding function for metadata-only collections."""
-            
-            def __call__(self, input: Documents) -> Embeddings:
-                # Return a single-dimension zero vector for each document
-                # This is the smallest possible embedding ChromaDB accepts
-                return [[0.0] for _ in input]
-        
-        return MinimalEmbeddingFunction()
-    
     def _get_or_create_metadata_collection(self, name: str):
         """
         Get or create a collection for metadata (files, repositories).
-        These collections store metadata only and don't need semantic embeddings.
-        We use a minimal embedding to save space and computation.
+        These collections store metadata only and use documents for searchability.
+        No embeddings are needed - ChromaDB will use default embedding function.
         """
-        embedding_fn = self._get_minimal_embedding_function()
-        
         try:
-            # Try to get existing collection first (without specifying embedding function)
-            return self._client.get_collection(name)
-        except Exception:
-            # Collection doesn't exist, try to create it
-            try:
-                return self._client.create_collection(
-                    name=name,
-                    embedding_function=embedding_fn,
-                    metadata={"hnsw:space": "cosine"}
-                )
-            except Exception as create_error:
-                # If creation fails, try to get without embedding function again
-                # (collection might have been created by another process)
-                try:
-                    return self._client.get_collection(name)
-                except Exception:
-                    # Re-raise the original create error
-                    raise create_error
+            # Use get_or_create without specifying embedding function
+            # ChromaDB will use its default embedding function
+            return self._client.get_or_create_collection(
+                name=name,
+                metadata={"hnsw:space": "l2"}
+            )
+        except Exception as e:
+            raise e
     
     def get_stats(self) -> Dict[str, Any]:
         """Get ChromaDB statistics."""
@@ -281,30 +255,86 @@ class ChromaBackend(DatabaseBackend):
             return None
     
     def remove_file_data(self, file_path: str) -> bool:
-        """Remove existing file and its chunks from database."""
+        """Remove existing file and its chunks from database.
+        
+        Removes ALL versions of the file matching the given path.
+        """
         try:
-            # Get file record first
+            # Get all file records matching this path
             files_collection = self._client.get_collection('files')
             file_results = files_collection.get(
                 where={"file_path": file_path}
             )
             
             if file_results['ids']:
-                file_id = file_results['ids'][0]
-                
-                # Remove chunks first
+                # Remove chunks for all file versions
                 try:
                     chunks_collection = self._client.get_collection('content_chunks')
+                    for file_id in file_results['ids']:
+                        # Convert file_id to int for chunk query (chunks store file_id as int)
+                        file_id_int = int(file_id) if isinstance(file_id, str) and file_id.isdigit() else file_id
+                        chunk_results = chunks_collection.get(
+                            where={"file_id": file_id_int}
+                        )
+                        if chunk_results['ids']:
+                            chunks_collection.delete(ids=chunk_results['ids'])
+                except Exception as e:
+                    # Log but don't fail - collection might not exist or have no chunks
+                    import logging
+                    logging.getLogger(__name__).warning(f"Error removing chunks: {e}")
+                
+                # Remove all file records
+                files_collection.delete(ids=file_results['ids'])
+            
+            return True
+        except Exception:
+            return False
+    
+    def remove_file_version(self, file_path: str, commit_sha: str) -> bool:
+        """Remove a specific version of a file by commit SHA.
+        
+        Args:
+            file_path: Path to the file
+            commit_sha: Full or partial commit SHA (will match prefix)
+        """
+        try:
+            # Get all file records matching this path
+            files_collection = self._client.get_collection('files')
+            file_results = files_collection.get(
+                where={"file_path": file_path}
+            )
+            
+            if not file_results['ids']:
+                return False
+            
+            # Find matching commit(s)
+            matching_ids = []
+            for i, file_id in enumerate(file_results['ids']):
+                file_commit = file_results['metadatas'][i].get('commit_sha', '')
+                if file_commit.startswith(commit_sha):
+                    matching_ids.append(file_id)
+            
+            if not matching_ids:
+                return False
+            
+            # Remove chunks for matching versions
+            try:
+                chunks_collection = self._client.get_collection('content_chunks')
+                for file_id in matching_ids:
+                    # Convert file_id to int for chunk query (chunks store file_id as int)
+                    file_id_int = int(file_id) if isinstance(file_id, str) and file_id.isdigit() else file_id
                     chunk_results = chunks_collection.get(
-                        where={"file_id": file_id}
+                        where={"file_id": file_id_int}
                     )
                     if chunk_results['ids']:
                         chunks_collection.delete(ids=chunk_results['ids'])
-                except Exception:
-                    pass  # Collection might not exist or have no chunks
-                
-                # Remove file record
-                files_collection.delete(ids=[file_id])
+            except Exception as e:
+                # Log but don't fail - collection might not exist or have no chunks
+                import logging
+                logging.getLogger(__name__).warning(f"Error removing chunks: {e}")
+            
+            # Remove matching file records
+            files_collection.delete(ids=matching_ids)
             
             return True
         except Exception:
