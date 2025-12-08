@@ -362,12 +362,18 @@ def ingest_docs_batch(ctx, directory: str, pattern: str, recursive: bool,
 @click.argument('file_path')
 @click.option('--commit', help='Query file at specific commit SHA')
 @click.option('--timestamp', help='Query file at specific timestamp (ISO format)')
+@click.option('--all-versions', is_flag=True, help='Show all versions/history of the file')
+@click.option('--limit', type=int, default=100, help='Maximum number of versions to show (with --all-versions)')
 @click.option('--json', 'json_output', is_flag=True, help='Output in JSON format')
 @click.pass_context
 @handle_cli_errors
 def query_file(ctx, repo_url: str, file_path: str, commit: Optional[str], 
-               timestamp: Optional[str], json_output: bool):
-    """Query a specific file from the database with temporal constraints."""
+               timestamp: Optional[str], all_versions: bool, limit: int, json_output: bool):
+    """Query a specific file from the database with temporal constraints.
+    
+    By default, shows current version. Use --all-versions to see file history.
+    Use --commit or --timestamp for temporal queries of specific versions.
+    """
     from ..backends.factory import get_backend
     from ..services.query_service import QueryService
     from datetime import datetime
@@ -387,7 +393,63 @@ def query_file(ctx, repo_url: str, file_path: str, commit: Optional[str],
         # Create query service
         query_service = QueryService(backend)
         
-        # Parse timestamp if provided
+        # Handle all-versions mode (replaces file-history functionality)
+        if all_versions:
+            # Get file history
+            history = query_service.get_file_history(repo_url, file_path, limit)
+            
+            if not history:
+                click.echo("❌ No history found for this file", err=True)
+                return
+            
+            # Output file history
+            if json_output:
+                # JSON output for history
+                output = {
+                    'repo_url': repo_url,
+                    'file_path': file_path,
+                    'version_count': len(history),
+                    'query_mode': 'all_versions',
+                    'versions': [
+                        {
+                            'file_id': v.get('id'),
+                            'commit_sha': v.get('commit_sha'),
+                            'valid_from': v.get('valid_from') if isinstance(v.get('valid_from'), str) else (v.get('valid_from').isoformat() if v.get('valid_from') else None),
+                            'valid_until': v.get('valid_until') if isinstance(v.get('valid_until'), str) else (v.get('valid_until').isoformat() if v.get('valid_until') else None),
+                            'word_count': v.get('word_count'),
+                            'chunk_count': v.get('chunk_count'),
+                            'content_hash': v.get('content_hash')
+                        }
+                        for v in history
+                    ]
+                }
+                click.echo(json.dumps(output, indent=2))
+            else:
+                # Table format for history
+                click.echo("=" * 100)
+                click.echo(f"📜 File History: {file_path}")
+                click.echo(f"📦 Repository: {repo_url}")
+                click.echo(f"📊 Total versions: {len(history)}")
+                click.echo("=" * 100)
+                
+                # Header
+                click.echo(f"{'Commit':<12} {'Valid From':<20} {'Valid Until':<20} {'Words':<10} {'Chunks':<8}")
+                click.echo("-" * 100)
+                
+                # Rows
+                for v in history:
+                    commit_sha = str(v.get('commit_sha', ''))[:11]
+                    valid_from = str(v.get('valid_from', ''))[:19]
+                    valid_until = str(v.get('valid_until') or 'Current')[:19]
+                    words = str(v.get('word_count', 0))
+                    chunks = str(v.get('chunk_count', 0))
+                    
+                    click.echo(f"{commit_sha:<12} {valid_from:<20} {valid_until:<20} {words:<10} {chunks:<8}")
+                
+                click.echo("=" * 100)
+            return
+        
+        # Parse timestamp if provided (for single version queries)
         ts = None
         if timestamp:
             try:
@@ -397,20 +459,22 @@ def query_file(ctx, repo_url: str, file_path: str, commit: Optional[str],
                 click.echo("   Use ISO format: YYYY-MM-DDTHH:MM:SS", err=True)
                 return
         
-        # Query file
+        # Query single file version
         result = query_service.query_file(repo_url, file_path, commit_sha=commit, timestamp=ts)
         
         if not result:
             click.echo("❌ File not found", err=True)
             return
         
-        # Output results
+        # Output single version results  
         if json_output:
-            # JSON output
+            # JSON output for single version
             output = {
                 'file_id': result.get('id'),
                 'repo_url': repo_url,
                 'file_path': result.get('file_path'),
+                'query_mode': 'single_version',
+                'temporal_constraint': 'commit' if commit else ('timestamp' if timestamp else 'current'),
                 'commit_sha': result.get('commit_sha'),
                 'content_hash': result.get('content_hash'),
                 'file_size': result.get('file_size'),
@@ -575,89 +639,6 @@ def list_files(ctx, repo_url: Optional[str], content_type: Optional[str],
         
     except Exception as e:
         click.echo(f"❌ Error listing files: {e}", err=True)
-        raise
-
-
-@rag.command()
-@click.argument('repo_url')
-@click.argument('file_path')
-@click.option('--limit', type=int, default=100, help='Maximum number of versions to show')
-@click.option('--json', 'json_output', is_flag=True, help='Output in JSON format')
-@click.pass_context
-@handle_cli_errors
-def file_history(ctx, repo_url: str, file_path: str, limit: int, json_output: bool):
-    """Show version history for a specific file."""
-    from ..backends.factory import get_backend
-    from ..services.query_service import QueryService
-    import json
-    
-    verbose_echo(ctx, "Retrieving file history...")
-    
-    try:
-        # Get backend
-        backend_name = ctx.obj.get('db_backend')
-        backend = get_backend(backend_name)
-        
-        if not backend.is_connected():
-            click.echo("❌ Database not connected", err=True)
-            return
-        
-        # Create query service
-        query_service = QueryService(backend)
-        
-        # Get file history
-        history = query_service.get_file_history(repo_url, file_path, limit)
-        
-        if not history:
-            click.echo("❌ No history found for this file", err=True)
-            return
-        
-        if json_output:
-            # JSON output
-            output = {
-                'repo_url': repo_url,
-                'file_path': file_path,
-                'version_count': len(history),
-                'versions': [
-                    {
-                        'file_id': v.get('id'),
-                        'commit_sha': v.get('commit_sha'),
-                        'valid_from': v.get('valid_from') if isinstance(v.get('valid_from'), str) else (v.get('valid_from').isoformat() if v.get('valid_from') else None),
-                        'valid_until': v.get('valid_until') if isinstance(v.get('valid_until'), str) else (v.get('valid_until').isoformat() if v.get('valid_until') else None),
-                        'word_count': v.get('word_count'),
-                        'chunk_count': v.get('chunk_count'),
-                        'content_hash': v.get('content_hash')
-                    }
-                    for v in history
-                ]
-            }
-            click.echo(json.dumps(output, indent=2))
-        else:
-            # Table format
-            click.echo("=" * 100)
-            click.echo(f"📜 File History: {file_path}")
-            click.echo(f"📦 Repository: {repo_url}")
-            click.echo(f"📊 Total versions: {len(history)}")
-            click.echo("=" * 100)
-            
-            # Header
-            click.echo(f"{'Commit':<12} {'Valid From':<20} {'Valid Until':<20} {'Words':<10} {'Chunks':<8}")
-            click.echo("-" * 100)
-            
-            # Rows
-            for v in history:
-                commit = str(v.get('commit_sha', ''))[:11]
-                valid_from = str(v.get('valid_from', ''))[:19]
-                valid_until = str(v.get('valid_until') or 'Current')[:19]
-                words = str(v.get('word_count', 0))
-                chunks = str(v.get('chunk_count', 0))
-                
-                click.echo(f"{commit:<12} {valid_from:<20} {valid_until:<20} {words:<10} {chunks:<8}")
-            
-            click.echo("=" * 100)
-        
-    except Exception as e:
-        click.echo(f"❌ Error retrieving file history: {e}", err=True)
         raise
 
 
