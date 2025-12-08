@@ -25,6 +25,33 @@ class ChromaBackend(DatabaseBackend):
         except Exception as e:
             raise ConnectionError(f"Failed to initialize ChromaDB client: {e}")
     
+    def _get_or_create_metadata_collection(self, name: str):
+        """
+        Get or create a collection for metadata (files, repositories).
+        These collections store metadata only and don't need semantic embeddings.
+        We use a minimal embedding to save space and computation.
+        """
+        try:
+            return self._client.get_collection(name)
+        except Exception:
+            # Create collection with a minimal embedding function
+            # This returns a single-dimension zero vector to minimize storage
+            from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
+            
+            class MinimalEmbeddingFunction(EmbeddingFunction):
+                """Minimal embedding function for metadata-only collections."""
+                
+                def __call__(self, input: Documents) -> Embeddings:
+                    # Return a single-dimension zero vector for each document
+                    # This is the smallest possible embedding ChromaDB accepts
+                    return [[0.0] for _ in input]
+            
+            return self._client.create_collection(
+                name=name,
+                embedding_function=MinimalEmbeddingFunction(),
+                metadata={"hnsw:space": "cosine"}
+            )
+    
     def get_stats(self) -> Dict[str, Any]:
         """Get ChromaDB statistics."""
         stats = {
@@ -272,7 +299,7 @@ class ChromaBackend(DatabaseBackend):
         """Store file record and return file ID."""
         import hashlib
         
-        files_collection = self._client.get_or_create_collection('files')
+        files_collection = self._get_or_create_metadata_collection('files')
         
         # Generate unique file ID
         file_id = f"file_{hashlib.md5(file_path.encode()).hexdigest()[:16]}"
@@ -388,7 +415,7 @@ class ChromaBackend(DatabaseBackend):
         from datetime import datetime
         
         try:
-            repos_collection = self._client.get_or_create_collection('repositories')
+            repos_collection = self._get_or_create_metadata_collection('repositories')
             
             # Generate unique repo ID
             repo_id = int(hashlib.md5(repo_url.encode()).hexdigest()[:8], 16)
@@ -484,7 +511,7 @@ class ChromaBackend(DatabaseBackend):
         logger = logging.getLogger(__name__)
         
         try:
-            files_collection = self._client.get_or_create_collection('files')
+            files_collection = self._get_or_create_metadata_collection('files')
             
             # Generate unique file version ID
             version_key = f"{file_version['repo_id']}_{file_version['commit_sha']}_{file_version['file_path']}"
