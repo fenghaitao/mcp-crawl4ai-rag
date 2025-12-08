@@ -383,6 +383,72 @@ class CopilotClient:
             
             return response.json()
 
+    async def create_chat_completions_batch(
+        self,
+        messages_list: List[List[Dict[str, str]]],
+        model: str = "gpt-4o",
+        temperature: float = 0.3,
+        max_tokens: int = 200,
+        account_type: str = "individual",
+        **kwargs
+    ) -> List[Dict[str, Any]]:
+        """
+        Create multiple chat completions concurrently.
+        
+        Args:
+            messages_list: List of message lists to process
+            model: Model to use for chat completion (default: gpt-4o)
+            temperature: Temperature for generation
+            max_tokens: Maximum tokens to generate
+            account_type: GitHub account type
+            **kwargs: Additional parameters
+            
+        Returns:
+            List of chat completion responses
+        """
+        if not messages_list:
+            return []
+        
+        results = []
+        
+        # Process all requests concurrently
+        tasks = [
+            self.create_chat_completion(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                account_type=account_type,
+                **kwargs
+            )
+            for messages in messages_list
+        ]
+        
+        # Gather all results
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Convert exceptions to error responses
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    error_msg = f"{type(result).__name__}: {str(result)}"
+                    results[i] = {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": f"Error: {error_msg}",
+                                    "role": "assistant"
+                                },
+                                "finish_reason": "error"
+                            }
+                        ],
+                        "error": error_msg
+                    }
+        except Exception as e:
+            raise RuntimeError(f"Error creating batch completions: {e}")
+        
+        return results
+
     async def initialize(self) -> bool:
         """
         Initialize the client by getting Copilot token.
@@ -707,3 +773,155 @@ def create_chat_completion_copilot(
         elapsed_time = time.time() - start_time
         logger.error(f"❌ Error running async Copilot chat completion after {elapsed_time:.2f}s: {e}")
         raise
+
+
+def create_chat_completions_batch_copilot(
+    messages_list: List[List[Dict[str, str]]],
+    model: str = "gpt-4o",
+    temperature: float = 0.3,
+    max_tokens: int = 200,
+    **kwargs
+) -> List[Dict[str, Any]]:
+    """
+    Synchronous wrapper for creating batch chat completions using Copilot.
+    
+    Args:
+        messages_list: List of message lists to process
+        model: Model to use for chat completion
+        temperature: Temperature for generation
+        max_tokens: Maximum tokens to generate
+        **kwargs: Additional parameters
+        
+    Returns:
+        List of chat completion responses
+    """
+    import logging
+    import time
+    
+    logger = logging.getLogger(__name__)
+    start_time = time.time()
+    
+    if not messages_list:
+        return []
+    
+    # Log batch invocation details
+    logger.info(f"🤖 GitHub Copilot Batch Chat Completions")
+    logger.info(f"   📊 Batch size: {len(messages_list)}")
+    logger.info(f"   📋 Model: {model}")
+    logger.info(f"   🌡️  Temperature: {temperature}")
+    logger.info(f"   🎛️  Max tokens: {max_tokens}")
+    
+    # Log message statistics
+    total_messages = sum(len(messages) for messages in messages_list)
+    avg_messages = total_messages / len(messages_list) if messages_list else 0
+    logger.info(f"   💬 Total messages: {total_messages} (avg {avg_messages:.1f} per completion)")
+    
+    async def _create():
+        try:
+            logger.info("🚀 Initializing Copilot client...")
+            client = await get_copilot_client()
+            if client is None:
+                logger.error("❌ Copilot client not available")
+                logger.info("   💡 Make sure GITHUB_TOKEN environment variable is set")
+                # Return error responses for all requests
+                return [{
+                    "choices": [{
+                        "message": {
+                            "content": "Error: Copilot client not available",
+                            "role": "assistant"
+                        },
+                        "finish_reason": "error"
+                    }],
+                    "error": "Copilot client not available"
+                }] * len(messages_list)
+            
+            logger.info("✅ Copilot client ready, processing batch completions...")
+            results = await client.create_chat_completions_batch(
+                messages_list=messages_list,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs
+            )
+            
+            elapsed_time = time.time() - start_time
+            
+            # Count successful vs failed completions
+            successful = sum(1 for r in results if "error" not in r)
+            failed = len(results) - successful
+            
+            logger.info(f"✅ Copilot batch completions finished!")
+            logger.info(f"   ⏱️  Total time: {elapsed_time:.2f}s")
+            logger.info(f"   📊 Success rate: {successful}/{len(results)} completions")
+            
+            if successful > 0:
+                completions_per_sec = successful / elapsed_time
+                logger.debug(f"   📈 Processing speed: {completions_per_sec:.1f} completions/second")
+            
+            if failed > 0:
+                logger.warning(f"   ⚠️  Failed completions: {failed}")
+            
+            # Calculate total token usage
+            total_prompt_tokens = 0
+            total_completion_tokens = 0
+            total_tokens = 0
+            
+            for result in results:
+                if "usage" in result:
+                    usage = result["usage"]
+                    total_prompt_tokens += usage.get("prompt_tokens", 0)
+                    total_completion_tokens += usage.get("completion_tokens", 0)
+                    total_tokens += usage.get("total_tokens", 0)
+            
+            if total_tokens > 0:
+                logger.info(f"   🎯 Total tokens - Prompt: {total_prompt_tokens}, Completion: {total_completion_tokens}, Total: {total_tokens}")
+            
+            return results
+            
+        except Exception as e:
+            elapsed_time = time.time() - start_time
+            logger.error(f"❌ Copilot batch completions failed after {elapsed_time:.2f}s")
+            logger.error(f"   📊 Batch size: {len(messages_list)}")
+            logger.error(f"   🚨 Error: {type(e).__name__}: {str(e)[:200]}{'...' if len(str(e)) > 200 else ''}")
+            # Return error responses for all requests
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            return [{
+                "choices": [{
+                    "message": {
+                        "content": f"Error: {error_msg}",
+                        "role": "assistant"
+                    },
+                    "finish_reason": "error"
+                }],
+                "error": error_msg
+            }] * len(messages_list)
+    
+    try:
+        # Check if we're already in an event loop
+        try:
+            loop = asyncio.get_running_loop()
+            # If we get here, we're in an event loop, so we need to run in a thread
+            import concurrent.futures
+            logger.debug("   🔄 Running in existing event loop (using thread executor)")
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, _create())
+                return future.result()
+        except RuntimeError:
+            # No event loop running, safe to use asyncio.run()
+            logger.debug("   🔄 No event loop detected, using asyncio.run()")
+            return asyncio.run(_create())
+    except Exception as e:
+        elapsed_time = time.time() - start_time
+        logger.error(f"❌ Error running async Copilot batch completions after {elapsed_time:.2f}s: {e}")
+        # Return error responses for all requests
+        error_msg = f"{type(e).__name__}: {str(e)}"
+        return [{
+            "choices": [{
+                "message": {
+                    "content": f"Error: {error_msg}",
+                    "role": "assistant"
+                },
+                "finish_reason": "error"
+            }],
+            "error": error_msg
+        }] * len(messages_list)

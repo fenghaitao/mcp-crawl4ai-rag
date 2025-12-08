@@ -21,14 +21,29 @@ except ImportError:
 # Import Copilot client
 try:
     # Try new llms package first
-    from llms.copilot_client import create_embeddings_batch_copilot, create_embedding_copilot, create_chat_completion_copilot
+    from llms.copilot_client import (
+        create_embeddings_batch_copilot,
+        create_embedding_copilot,
+        create_chat_completion_copilot,
+        create_chat_completions_batch_copilot
+    )
 except ImportError:
     try:
         # Try relative import (when run as module)
-        from .copilot_client import create_embeddings_batch_copilot, create_embedding_copilot, create_chat_completion_copilot
+        from .copilot_client import (
+            create_embeddings_batch_copilot,
+            create_embedding_copilot,
+            create_chat_completion_copilot,
+            create_chat_completions_batch_copilot
+        )
     except ImportError:
         # Fallback for when running from different contexts (e.g., tests)
-        from copilot_client import create_embeddings_batch_copilot, create_embedding_copilot, create_chat_completion_copilot
+        from copilot_client import (
+            create_embeddings_batch_copilot,
+            create_embedding_copilot,
+            create_chat_completion_copilot,
+            create_chat_completions_batch_copilot
+        )
 
 # Load OpenAI API key for embeddings
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -349,6 +364,138 @@ def create_chat_completion(
     except Exception as e:
         print(f"Error creating chat completion: {e}")
         raise
+
+
+def create_chat_completions_batch(
+    messages_list: List[List[Dict[str, str]]],
+    model: Optional[str] = None,
+    temperature: float = 0.3,
+    max_tokens: int = 200,
+    max_workers: int = 10,
+    **kwargs
+) -> List[Dict[str, Any]]:
+    """
+    Create multiple chat completions concurrently using threading.
+    Supports both OpenAI and GitHub Copilot chat APIs.
+
+    Args:
+        messages_list: List of message lists, each containing message dictionaries
+        model: Model to use (if None, uses MODEL_CHOICE env var)
+        temperature: Temperature for generation
+        max_tokens: Maximum tokens to generate
+        max_workers: Maximum number of concurrent requests
+        **kwargs: Additional parameters
+
+    Returns:
+        List of chat completion responses in the same order as input
+    """
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    start_time = time.time()
+    
+    if not messages_list:
+        return []
+
+    # Log batch invocation details
+    logger.info(f"🔗 Chat Completion Batch Request")
+    logger.info(f"   📊 Batch size: {len(messages_list)}")
+    logger.info(f"   🧵 Max workers: {max_workers}")
+    logger.info(f"   📋 Model: {model or os.getenv('MODEL_CHOICE', 'gpt-4o-mini')}")
+    logger.info(f"   🌡️  Temperature: {temperature}")
+    logger.info(f"   🎛️  Max tokens: {max_tokens}")
+
+    # Check if we should use Copilot
+    use_copilot = os.getenv("USE_COPILOT_CHAT", "false").lower() == "true"
+    if use_copilot:
+        logger.info(f"   🤖 Provider: GitHub Copilot")
+    else:
+        logger.info(f"   🤖 Provider: OpenAI")
+
+    results = [None] * len(messages_list)
+    successful_count = 0
+    failed_count = 0
+
+    def process_single_completion(idx: int, messages: List[Dict[str, str]]) -> Tuple[int, Optional[Dict[str, Any]], Optional[str]]:
+        """Process a single completion and return (index, result, error)."""
+        try:
+            result = create_chat_completion(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs
+            )
+            return (idx, result, None)
+        except Exception as e:
+            error_msg = f"{type(e).__name__}: {str(e)[:200]}"
+            return (idx, None, error_msg)
+
+    logger.info("🚀 Processing completions concurrently...")
+
+    # Use ThreadPoolExecutor for concurrent processing
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        future_to_idx = {
+            executor.submit(process_single_completion, idx, messages): idx
+            for idx, messages in enumerate(messages_list)
+        }
+
+        # Process results as they complete
+        for future in concurrent.futures.as_completed(future_to_idx):
+            idx, result, error = future.result()
+            
+            if result is not None:
+                results[idx] = result
+                successful_count += 1
+                logger.debug(f"   ✅ Completion {idx + 1}/{len(messages_list)} successful")
+            else:
+                # Create error response
+                results[idx] = {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": f"Error: {error}",
+                                "role": "assistant"
+                            },
+                            "finish_reason": "error"
+                        }
+                    ],
+                    "error": error
+                }
+                failed_count += 1
+                logger.warning(f"   ❌ Completion {idx + 1}/{len(messages_list)} failed: {error}")
+
+    elapsed_time = time.time() - start_time
+    
+    # Log summary
+    logger.info(f"✅ Batch completions finished!")
+    logger.info(f"   ⏱️  Total time: {elapsed_time:.2f}s")
+    logger.info(f"   📊 Success rate: {successful_count}/{len(messages_list)} completions")
+    
+    if successful_count > 0:
+        completions_per_sec = successful_count / elapsed_time
+        logger.debug(f"   📈 Processing speed: {completions_per_sec:.1f} completions/second")
+    
+    if failed_count > 0:
+        logger.warning(f"   ⚠️  Failed completions: {failed_count}")
+
+    # Calculate total token usage
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_tokens = 0
+    
+    for result in results:
+        if result and "usage" in result:
+            usage = result["usage"]
+            total_prompt_tokens += usage.get("prompt_tokens", 0)
+            total_completion_tokens += usage.get("completion_tokens", 0)
+            total_tokens += usage.get("total_tokens", 0)
+    
+    if total_tokens > 0:
+        logger.info(f"   🎯 Total tokens - Prompt: {total_prompt_tokens}, Completion: {total_completion_tokens}, Total: {total_tokens}")
+
+    return results
 
 
 def create_embedding(text: str) -> List[float]:
