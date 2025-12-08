@@ -126,6 +126,7 @@ def ingest_doc(ctx, file_path: str, force: bool):
     """Ingest a documentation file into the RAG system."""
     from ..backends.factory import get_backend
     from ..services.document_ingest_service import DocumentIngestService
+    from ..services.git_service import GitService
     
     verbose_echo(ctx, "Ingesting documentation file...")
     
@@ -141,8 +142,9 @@ def ingest_doc(ctx, file_path: str, force: bool):
             click.echo("❌ Database not connected", err=True)
             return
         
-        # Create document ingest service
-        service = DocumentIngestService(backend)
+        # Create git service and document ingest service
+        git_service = GitService()
+        service = DocumentIngestService(backend, git_service)
         
         # Process the document
         result = service.ingest_document(file_path, force_reprocess=force)

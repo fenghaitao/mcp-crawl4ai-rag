@@ -73,11 +73,15 @@ class DocumentIngestService:
                     repo_id = repo['id']
                     self.backend.update_repository_last_ingested(repo_id)
                 
+                # Convert file_path to absolute path and get relative path from git info
+                abs_file_path = Path(file_path).resolve()
+                relative_path = git_info.get_relative_path(abs_file_path)
+                
                 # Store file version with temporal fields
                 file_version = {
                     'repo_id': repo_id,
                     'commit_sha': git_info.commit_sha,
-                    'file_path': git_info.get_relative_path(Path(file_path)),
+                    'file_path': relative_path,
                     'content_hash': content_hash,
                     'file_size': stats['size'],
                     'word_count': 0,

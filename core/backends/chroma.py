@@ -360,8 +360,11 @@ class ChromaBackend(DatabaseBackend):
         try:
             files_collection = self._client.get_collection('files')
             
+            # Ensure file_id is a string (it might be an int from store_file_version)
+            file_id_str = str(file_id)
+            
             # Get current file metadata
-            current_file = files_collection.get(ids=[file_id])
+            current_file = files_collection.get(ids=[file_id_str])
             if not current_file['ids']:
                 return False
             
@@ -371,7 +374,7 @@ class ChromaBackend(DatabaseBackend):
             current_metadata['chunk_count'] = chunk_count
             
             files_collection.update(
-                ids=[file_id],
+                ids=[file_id_str],
                 metadatas=[current_metadata]
             )
             return True
@@ -504,7 +507,8 @@ class ChromaBackend(DatabaseBackend):
                     
                     # Prepare updates for current versions
                     for i, metadata in enumerate(current_files['metadatas']):
-                        if metadata.get('valid_until') is None:
+                        # Only update if it's not the same file (different ID)
+                        if metadata.get('valid_until') is None and current_files['ids'][i] != str(file_id):
                             updated_metadata = metadata.copy()
                             updated_metadata['valid_until'] = (
                                 file_version['valid_from'].isoformat() 
@@ -518,17 +522,47 @@ class ChromaBackend(DatabaseBackend):
                 except Exception as e:
                     logger.warning(f"Error finding current version for update: {e}")
             
-            # Prepare new version metadata
-            file_metadata = file_version.copy()
-            file_metadata['id'] = file_id
+            # Check if this file version already exists
+            existing_check = files_collection.get(ids=[str(file_id)])
             
-            # Convert datetime objects to ISO format strings
-            if 'valid_from' in file_metadata and hasattr(file_metadata['valid_from'], 'isoformat'):
-                file_metadata['valid_from'] = file_metadata['valid_from'].isoformat()
-            if 'valid_until' in file_metadata and file_metadata['valid_until'] and hasattr(file_metadata['valid_until'], 'isoformat'):
-                file_metadata['valid_until'] = file_metadata['valid_until'].isoformat()
-            if 'ingested_at' in file_metadata and hasattr(file_metadata['ingested_at'], 'isoformat'):
-                file_metadata['ingested_at'] = file_metadata['ingested_at'].isoformat()
+            # Prepare new version metadata
+            file_metadata = {}
+            
+            # If updating existing file, start with existing metadata
+            if existing_check['ids']:
+                file_metadata = existing_check['metadatas'][0].copy()
+            
+            # Update with new values from file_version
+            for key, value in file_version.items():
+                if key == 'valid_until':
+                    # Handle valid_until specially
+                    if value is None:
+                        # Current version - set to empty string (ChromaDB doesn't support removing fields)
+                        file_metadata['valid_until'] = ''
+                    else:
+                        # Historical version - set valid_until
+                        if hasattr(value, 'isoformat'):
+                            file_metadata['valid_until'] = value.isoformat()
+                        else:
+                            file_metadata['valid_until'] = value
+                elif key == 'valid_from':
+                    # Convert datetime to ISO format
+                    if hasattr(value, 'isoformat'):
+                        file_metadata['valid_from'] = value.isoformat()
+                    else:
+                        file_metadata['valid_from'] = value
+                elif key == 'ingested_at':
+                    # Convert datetime to ISO format
+                    if hasattr(value, 'isoformat'):
+                        file_metadata['ingested_at'] = value.isoformat()
+                    else:
+                        file_metadata['ingested_at'] = value
+                else:
+                    # Copy other fields as-is
+                    file_metadata[key] = value
+            
+            # Add file_id to metadata
+            file_metadata['id'] = file_id
             
             # Execute operations (best effort transaction)
             try:
@@ -539,12 +573,21 @@ class ChromaBackend(DatabaseBackend):
                         metadatas=[update['metadata']]
                     )
                 
-                # Add new version
-                files_collection.add(
-                    ids=[str(file_id)],
-                    documents=[file_version['file_path']],
-                    metadatas=[file_metadata]
-                )
+                # Add or update file version
+                if existing_check['ids']:
+                    # Update existing version
+                    files_collection.update(
+                        ids=[str(file_id)],
+                        documents=[file_version['file_path']],
+                        metadatas=[file_metadata]
+                    )
+                else:
+                    # Add new version
+                    files_collection.add(
+                        ids=[str(file_id)],
+                        documents=[file_version['file_path']],
+                        metadatas=[file_metadata]
+                    )
                 
                 return file_id
                 
@@ -570,9 +613,10 @@ class ChromaBackend(DatabaseBackend):
                 }
             )
             
-            # Find version with valid_until = None
+            # Find version with valid_until = None or empty string (current version)
             for i, metadata in enumerate(results['metadatas']):
-                if metadata.get('valid_until') is None:
+                valid_until = metadata.get('valid_until')
+                if valid_until is None or valid_until == '':
                     return metadata
             return None
         except Exception:
@@ -691,7 +735,9 @@ class ChromaBackend(DatabaseBackend):
             files = []
             for metadata in results['metadatas']:
                 if current_only:
-                    if metadata.get('valid_until') is None:
+                    valid_until = metadata.get('valid_until')
+                    # Current version has valid_until = None or empty string
+                    if valid_until is None or valid_until == '':
                         files.append(metadata)
                 else:
                     files.append(metadata)
