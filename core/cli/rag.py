@@ -337,12 +337,15 @@ def egest_python_test(ctx, file_path: str, format: str):
 @click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
 @click.option('--force', '-f', is_flag=True, help='Force reprocess existing files')
 @click.option('--dry-run', is_flag=True, help='Validate files without processing')
-@click.option('--continue', 'resume', is_flag=True, help='Resume from previous progress')
 @click.pass_context
 @handle_cli_errors
 def ingest_docs_batch(ctx, directory: str, pattern: str, recursive: bool, 
-                      force: bool, dry_run: bool, resume: bool):
-    """Batch ingest multiple documentation files from a directory."""
+                      force: bool, dry_run: bool):
+    """Batch ingest multiple documentation files from a directory.
+    
+    Automatically skips files already in the database (unless --force is used).
+    Uses the database as the source of truth for tracking progress.
+    """
     from ..backends.factory import get_backend
     from ..services.git_service import GitService
     from ..services.document_ingest_service import DocumentIngestService
@@ -358,7 +361,6 @@ def ingest_docs_batch(ctx, directory: str, pattern: str, recursive: bool,
     click.echo(f"📂 Recursive: {'Yes' if recursive else 'No'}")
     click.echo(f"🔄 Force reprocess: {'Yes' if force else 'No'}")
     click.echo(f"🧪 Dry run: {'Yes' if dry_run else 'No'}")
-    click.echo(f"⏯️  Resume: {'Yes' if resume else 'No'}")
     click.echo()
     
     try:
@@ -385,8 +387,7 @@ def ingest_docs_batch(ctx, directory: str, pattern: str, recursive: bool,
             pattern=pattern,
             recursive=recursive,
             force=force,
-            dry_run=dry_run,
-            resume=resume
+            dry_run=dry_run
         )
         
         elapsed_time = time.time() - start_time

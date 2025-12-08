@@ -185,104 +185,51 @@ class BatchIngestService:
         # File is valid (Requirement 12.4)
         return {'valid': True, 'issues': issues, 'warnings': warnings}
     
-    def _load_progress(self, progress_file: Path) -> set:
+    def _get_completed_files_from_database(self, directory: Path) -> set:
         """
-        Load completed files from progress file with corruption recovery.
+        Get already-ingested files from database.
         
         Args:
-            progress_file: Path to progress tracking file
+            directory: Directory being processed
             
         Returns:
-            Set of completed file paths
+            Set of completed file paths (relative to git root)
             
         Requirements: 4.1, 4.2, 4.4
         """
-        import json
-        import shutil
-        import logging
-        
-        logger = logging.getLogger(__name__)
-        
-        if not progress_file.exists():
-            return set()
+        completed_files = set()
         
         try:
-            with open(progress_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                completed_files = data.get('completed_files', [])
-                
-                # Validate data structure
-                if not isinstance(completed_files, list):
-                    raise ValueError("Invalid progress file format: completed_files should be a list")
-                
-                # Filter out invalid entries
-                valid_files = set()
-                for file_path in completed_files:
-                    if isinstance(file_path, str) and file_path.strip():
-                        valid_files.add(file_path.strip())
-                    else:
-                        logger.warning(f"Invalid file path in progress file: {file_path}")
-                
-                logger.info(f"Loaded {len(valid_files)} completed files from progress")
-                return valid_files
-                
-        except (json.JSONDecodeError, IOError, ValueError) as e:
-            # Create backup and attempt recovery
-            backup_file = progress_file.with_suffix('.backup')
-            try:
-                shutil.copy(progress_file, backup_file)
-                logger.warning(
-                    f"Progress file corrupted ({e}), backup saved to {backup_file}. "
-                    f"Starting fresh."
-                )
-            except Exception as backup_error:
-                logger.error(f"Failed to create backup: {backup_error}")
+            # Detect git repository
+            git_info = self.git_service.detect_repository(directory)
             
-            # Attempt simple text recovery (look for file paths)
-            recovered_files = self._attempt_progress_recovery(progress_file)
-            if recovered_files:
-                logger.info(f"Recovered {len(recovered_files)} files from corrupted progress")
-                return recovered_files
-            
-            return set()
-    
-    def _attempt_progress_recovery(self, progress_file: Path) -> set:
-        """
-        Attempt to recover file paths from corrupted progress file.
-        
-        Args:
-            progress_file: Path to corrupted progress file
-            
-        Returns:
-            Set of recovered file paths
-        """
-        import re
-        import logging
-        
-        logger = logging.getLogger(__name__)
-        recovered_files = set()
-        
-        try:
-            with open(progress_file, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
+            if git_info:
+                # Get repository from database
+                repo = self.backend.get_repository(git_info.repo_url)
                 
-                # Look for file path patterns (common extensions)
-                path_pattern = r'["\']([^"\']*\.(?:md|html?|rst|txt|dml|py|json|ya?ml))["\']'
-                matches = re.findall(path_pattern, content, re.IGNORECASE)
-                
-                for match in matches:
-                    if Path(match).is_absolute() or '/' in match or '\\' in match:
-                        recovered_files.add(match)
-                        
-                logger.info(f"Recovery attempt found {len(recovered_files)} potential file paths")
-                
+                if repo:
+                    # Query all current files in this repository
+                    files, _ = self.backend.list_files(
+                        repo_id=repo['id'],
+                        current_only=True,
+                        limit=10000  # Large limit to get all files
+                    )
+                    
+                    # Extract file paths
+                    for f in files:
+                        completed_files.add(f['file_path'])
+                    
+                    self.logger.info(f"Found {len(completed_files)} files already in database")
+            else:
+                self.logger.warning("Not a git repository - cannot check database for existing files")
+        
         except Exception as e:
-            logger.error(f"Failed to recover from corrupted progress file: {e}")
+            self.logger.warning(f"Failed to query database for completed files: {e}")
         
-        return recovered_files
+        return completed_files
     
     def _process_files_in_chunks(self, files: List[Path], progress: BatchProgress, 
-                                progress_file: Path, completed_files: set, 
+                                directory: Path, completed_files: set, 
                                 force: bool = False) -> None:
         """
         Process files in configurable chunks for better memory management.
@@ -290,13 +237,16 @@ class BatchIngestService:
         Args:
             files: List of files to process
             progress: Progress tracking object
-            progress_file: Progress file for checkpointing
-            completed_files: Set of already completed files
+            directory: Base directory for relative path calculation
+            completed_files: Set of already completed files (relative paths)
             force: Force reprocess existing files
         """
         from ..utils.retry import retry, with_retry_logging
         
         chunk_size = self.config.chunk_processing_size
+        
+        # Get git info for relative path calculation
+        git_info = self.git_service.detect_repository(directory)
         
         # Process files in chunks
         for i in range(0, len(files), chunk_size):
@@ -318,10 +268,17 @@ class BatchIngestService:
             for file_path in chunk:
                 file_path_str = str(file_path.absolute())
                 
-                # Skip if already completed
-                if file_path_str in completed_files:
+                # Calculate relative path for database comparison
+                if git_info:
+                    relative_path = git_info.get_relative_path(file_path.resolve())
+                else:
+                    relative_path = str(file_path)
+                
+                # Skip if already completed (unless force mode)
+                if not force and relative_path in completed_files:
                     progress.skipped += 1
                     progress.processed += 1
+                    self.logger.debug(f"Skipping already-ingested file: {relative_path}")
                     continue
                 
                 # Validate file before processing
@@ -337,13 +294,9 @@ class BatchIngestService:
                     continue
                 
                 # Process with retry logic
-                success = self._process_single_file_with_retry(
+                self._process_single_file_with_retry(
                     file_path_str, force, progress
                 )
-                
-                if success:
-                    # Save progress after successful processing
-                    self._save_progress(progress_file, file_path_str)
                 
                 # Update metrics periodically
                 if progress.processed % self.config.progress_save_interval == 0:
@@ -356,7 +309,7 @@ class BatchIngestService:
                     )
     
     def _process_single_file_with_retry(self, file_path: str, force: bool, 
-                                      progress: BatchProgress) -> bool:
+                                      progress: BatchProgress) -> None:
         """
         Process a single file with retry logic.
         
@@ -364,9 +317,6 @@ class BatchIngestService:
             file_path: File path to process
             force: Force reprocess existing files
             progress: Progress tracking object
-            
-        Returns:
-            True if successful, False otherwise
         """
         from ..utils.retry import retry, with_retry_logging
         
@@ -391,7 +341,6 @@ class BatchIngestService:
                     progress.skipped += 1
                 else:
                     progress.succeeded += 1
-                return True
             else:
                 # Record processing error
                 progress.failed += 1
@@ -400,7 +349,6 @@ class BatchIngestService:
                     'type': 'processing',
                     'error': result.get('error', 'Unknown error')
                 })
-                return False
                 
         except Exception as e:
             # All retries exhausted
@@ -412,45 +360,12 @@ class BatchIngestService:
                 'error': f"Failed after {self.config.max_retry_attempts} attempts: {str(e)}"
             })
             self.logger.error(f"Failed to process {file_path} after retries: {e}")
-            return False
     
-    def _save_progress(self, progress_file: Path, file_path: str):
-        """
-        Save completed file to progress file.
-        
-        Args:
-            progress_file: Path to progress tracking file
-            file_path: Path of completed file to record
-            
-        Requirements: 4.1, 4.2, 4.3
-        """
-        import json
-        from datetime import datetime
-        
-        # Load existing progress
-        completed_files = list(self._load_progress(progress_file))
-        
-        # Add new file if not already present
-        if file_path not in completed_files:
-            completed_files.append(file_path)
-        
-        # Save updated progress
-        progress_data = {
-            'version': '1.0',
-            'completed_files': completed_files,
-            'last_updated': datetime.now().isoformat()
-        }
-        
-        try:
-            with open(progress_file, 'w', encoding='utf-8') as f:
-                json.dump(progress_data, f, indent=2)
-        except IOError as e:
-            # Log error but don't fail the batch operation
-            pass
+
     
     def ingest_batch(self, directory: Path, pattern: str = "*.md",
                     recursive: bool = True, force: bool = False,
-                    dry_run: bool = False, resume: bool = False) -> BatchProgress:
+                    dry_run: bool = False) -> BatchProgress:
         """
         Ingest multiple files with progress tracking.
         
@@ -460,7 +375,6 @@ class BatchIngestService:
             recursive: Search subdirectories
             force: Force reprocess existing files
             dry_run: Validate without processing
-            resume: Resume from previous progress
             
         Returns:
             BatchProgress with results
@@ -475,13 +389,11 @@ class BatchIngestService:
         # Initialize progress tracking
         progress = BatchProgress(total_files=len(files))
         
-        # Set up progress file for resume capability (Requirement 4.1)
-        progress_file = directory / ".batch_ingest_progress.json"
+        # Get already-completed files from database (Requirement 4.1, 4.4)
+        # This replaces the JSON progress file approach
         completed_files = set()
-        
-        # Load progress if resuming (Requirement 4.4)
-        if resume:
-            completed_files = self._load_progress(progress_file)
+        if not force:
+            completed_files = self._get_completed_files_from_database(directory)
         
         # Dry-run mode: validate all files without processing (Requirement 12.5)
         if dry_run:
@@ -516,14 +428,7 @@ class BatchIngestService:
             return progress
         
         # Process files in chunks with improved memory management and retry logic
-        self._process_files_in_chunks(files, progress, progress_file, completed_files, force)
-        
-        # Remove progress file when all files completed (Requirement 4.5)
-        if progress.processed == progress.total_files and progress_file.exists():
-            try:
-                progress_file.unlink()
-            except Exception:
-                pass  # Ignore errors when removing progress file
+        self._process_files_in_chunks(files, progress, directory, completed_files, force)
         
         # Generate error report if failures occurred (Requirement 6.2)
         if progress.errors:
