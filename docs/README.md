@@ -1,4 +1,4 @@
-# Documentation Indifdasex
+# Documentation Index
 
 This directory contains all project documentation organized by category.
 
