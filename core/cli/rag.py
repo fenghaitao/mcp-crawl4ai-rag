@@ -487,6 +487,36 @@ def list_files(ctx, repo_url: Optional[str], content_type: Optional[str],
             offset=offset
         )
         
+        # Enrich files with repository information
+        files_with_repos = []
+        repo_cache = {}  # Cache to avoid repeated repo lookups
+        
+        for f in files:
+            repo_id = f.get('repo_id')
+            repo_info = None
+            
+            if repo_id:
+                # Check cache first
+                if repo_id in repo_cache:
+                    repo_info = repo_cache[repo_id]
+                else:
+                    # Fetch repo info and cache it
+                    repo_info = backend.get_repository_by_id(repo_id)
+                    repo_cache[repo_id] = repo_info
+            
+            # Add repo info to file
+            f_with_repo = f.copy()
+            if repo_info:
+                f_with_repo['repo_name'] = repo_info.get('repo_name', 'Unknown')
+                f_with_repo['repo_url'] = repo_info.get('repo_url', 'Unknown')
+            else:
+                f_with_repo['repo_name'] = 'Unknown'
+                f_with_repo['repo_url'] = 'Unknown'
+            
+            files_with_repos.append(f_with_repo)
+        
+        files = files_with_repos
+        
         if json_output:
             # JSON output
             output = {
@@ -498,12 +528,14 @@ def list_files(ctx, repo_url: Optional[str], content_type: Optional[str],
                     {
                         'file_id': f.get('id'),
                         'file_path': f.get('file_path'),
+                        'repo_name': f.get('repo_name'),
+                        'repo_url': f.get('repo_url'),
                         'commit_sha': f.get('commit_sha'),
                         'content_type': f.get('content_type'),
                         'word_count': f.get('word_count'),
                         'chunk_count': f.get('chunk_count'),
-                        'valid_from': f.get('valid_from').isoformat() if f.get('valid_from') else None,
-                        'valid_until': f.get('valid_until').isoformat() if f.get('valid_until') else None
+                        'valid_from': f.get('valid_from') if isinstance(f.get('valid_from'), str) else (f.get('valid_from').isoformat() if f.get('valid_from') else None),
+                        'valid_until': f.get('valid_until') if isinstance(f.get('valid_until'), str) else (f.get('valid_until').isoformat() if f.get('valid_until') else None)
                     }
                     for f in files
                 ]
@@ -511,28 +543,29 @@ def list_files(ctx, repo_url: Optional[str], content_type: Optional[str],
             click.echo(json.dumps(output, indent=2))
         else:
             # Table format
-            click.echo("=" * 100)
+            click.echo("=" * 130)
             click.echo(f"📚 Files List (showing {len(files)} of {total} total)")
-            click.echo("=" * 100)
+            click.echo("=" * 130)
             
             if not files:
                 click.echo("No files found matching the criteria")
             else:
                 # Header
-                click.echo(f"{'ID':<12} {'Path':<36} {'Type':<15} {'Chunks':<8} {'Words':<10}")
-                click.echo("-" * 100)
+                click.echo(f"{'ID':<12} {'Repository':<25} {'Path':<30} {'Type':<12} {'Chunks':<8} {'Words':<8}")
+                click.echo("-" * 130)
                 
                 # Rows
                 for f in files:
                     file_id = str(f.get('id', ''))[:11]  # Show more characters for file ID
-                    path = str(f.get('file_path', ''))[:35]  # Adjust path width accordingly
-                    content_type = str(f.get('content_type', ''))[:14]
+                    repo_name = str(f.get('repo_name', 'Unknown'))[:24]
+                    path = str(f.get('file_path', ''))[:29]  # Adjust path width accordingly
+                    content_type = str(f.get('content_type', ''))[:11]
                     chunks = str(f.get('chunk_count', 0))
                     words = str(f.get('word_count', 0))
                     
-                    click.echo(f"{file_id:<12} {path:<36} {content_type:<15} {chunks:<8} {words:<10}")
+                    click.echo(f"{file_id:<12} {repo_name:<25} {path:<30} {content_type:<12} {chunks:<8} {words:<8}")
             
-            click.echo("=" * 100)
+            click.echo("=" * 130)
             
             # Pagination info
             if total > limit:
