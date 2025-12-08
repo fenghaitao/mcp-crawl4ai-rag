@@ -78,21 +78,29 @@ def create_embeddings_batch_qwen(texts: List[str]) -> List[List[float]]:
     Returns:
         List of embeddings (each embedding is a list of floats)
     """
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
     if not texts:
         return []
 
     model = get_qwen_embedding_model()
     if model is None:
-        print("Qwen model not available, returning zero embeddings")
+        logger.warning("⚠️  Qwen model not available, returning zero embeddings")
+        logger.info("   💡 Make sure sentence-transformers and torch are installed")
         return [[0.0] * 1536 for _ in texts]  # Return default size embeddings
 
     try:
-        print(f"Creating embeddings for {len(texts)} texts using Qwen model...")
+        logger.debug(f"   🔧 Using CPU device for local processing")
         embeddings = model.encode(texts, convert_to_numpy=True)
         # Convert numpy arrays to lists
-        return [embedding.tolist() for embedding in embeddings]
+        result = [embedding.tolist() for embedding in embeddings]
+        logger.debug(f"   🔄 Converted {len(result)} numpy arrays to lists")
+        return result
     except Exception as e:
-        print(f"Error creating Qwen embeddings: {e}")
+        logger.error(f"❌ Error creating Qwen embeddings: {e}")
+        logger.info("   🔄 Falling back to zero embeddings")
         return [[0.0] * 1536 for _ in texts]
 
 def create_embedding_qwen(text: str) -> List[float]:
@@ -134,6 +142,12 @@ def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
     Returns:
         List of embeddings (each embedding is a list of floats)
     """
+    import logging
+    import time
+    
+    logger = logging.getLogger(__name__)
+    start_time = time.time()
+    
     if not texts:
         return []
 
@@ -141,26 +155,62 @@ def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
     use_qwen = os.getenv("USE_QWEN_EMBEDDINGS", "false").lower() == "true"
     use_copilot = os.getenv("USE_COPILOT_EMBEDDINGS", "false").lower() == "true"
 
+    # Log batch invocation details
+    logger.info(f"🔗 Embedding Batch Request")
+    logger.info(f"   📊 Batch size: {len(texts)}")
+    
+    if texts:
+        total_chars = sum(len(text) for text in texts)
+        avg_length = total_chars / len(texts)
+        logger.info(f"   📏 Average text length: {avg_length:.0f} characters")
+        logger.debug(f"   📝 First text preview: {texts[0][:100]}{'...' if len(texts[0]) > 100 else ''}")
+
     if use_qwen:
-        print("Using local Qwen model for embeddings...")
+        logger.info(f"   🤖 Provider: Local Qwen Embedding Model")
+        logger.info(f"   📋 Model: Qwen/Qwen3-Embedding-0.6B")
+        logger.info("🚀 Creating embeddings with Qwen model...")
         try:
-            return create_embeddings_batch_qwen(texts)
+            embeddings = create_embeddings_batch_qwen(texts)
+            elapsed_time = time.time() - start_time
+            logger.info(f"✅ Qwen batch embeddings successful!")
+            logger.info(f"   ⏱️  Total time: {elapsed_time:.2f}s")
+            logger.info(f"   📊 Embeddings created: {len(embeddings)}")
+            logger.info(f"   📐 Embedding dimension: {len(embeddings[0]) if embeddings else 0}")
+            if len(embeddings) > 0:
+                texts_per_sec = len(embeddings) / elapsed_time
+                logger.debug(f"   📈 Processing speed: {texts_per_sec:.1f} texts/second")
+            return embeddings
         except Exception as e:
-            print(f"Error using Qwen embeddings: {e}")
-            print("Falling back to next available option...")
+            elapsed_time = time.time() - start_time
+            logger.error(f"❌ Qwen embeddings failed after {elapsed_time:.2f}s: {e}")
+            logger.info("   🔄 Falling back to next available option...")
             # Fall through to next option
 
     if use_copilot:
-        print("Using GitHub Copilot for embeddings...")
+        logger.info(f"   🤖 Provider: GitHub Copilot")
+        logger.info(f"   📋 Model: text-embedding-3-small")
+        logger.info("🚀 Creating embeddings with GitHub Copilot...")
         try:
-            return create_embeddings_batch_copilot(texts)
+            embeddings = create_embeddings_batch_copilot(texts)
+            elapsed_time = time.time() - start_time
+            logger.info(f"✅ Copilot batch embeddings successful!")
+            logger.info(f"   ⏱️  Total time: {elapsed_time:.2f}s")
+            logger.info(f"   📊 Embeddings created: {len(embeddings)}")
+            logger.info(f"   📐 Embedding dimension: {len(embeddings[0]) if embeddings else 0}")
+            if len(embeddings) > 0:
+                texts_per_sec = len(embeddings) / elapsed_time
+                logger.debug(f"   📈 Processing speed: {texts_per_sec:.1f} texts/second")
+            return embeddings
         except Exception as e:
-            print(f"Error using Copilot embeddings: {e}")
-            print("Falling back to OpenAI embeddings...")
+            elapsed_time = time.time() - start_time
+            logger.error(f"❌ Copilot embeddings failed after {elapsed_time:.2f}s: {e}")
+            logger.info("   🔄 Falling back to OpenAI embeddings...")
             # Fall through to OpenAI implementation
 
     # OpenAI implementation (fallback)
-    print("Using OpenAI for embeddings...")
+    logger.info(f"   🤖 Provider: OpenAI")
+    logger.info(f"   📋 Model: text-embedding-3-small")
+    logger.info("🚀 Creating embeddings with OpenAI...")
     max_retries = 3
     retry_delay = 1.0  # Start with 1 second delay
 
@@ -170,17 +220,34 @@ def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
                 model="text-embedding-3-small", # Using text-embedding-3-small (same as Copilot)
                 input=texts
             )
-            return [item.embedding for item in response.data]
+            embeddings = [item.embedding for item in response.data]
+            elapsed_time = time.time() - start_time
+            
+            # Log success details
+            logger.info(f"✅ OpenAI batch embeddings successful!")
+            logger.info(f"   ⏱️  Total time: {elapsed_time:.2f}s")
+            logger.info(f"   📊 Embeddings created: {len(embeddings)}")
+            logger.info(f"   📐 Embedding dimension: {len(embeddings[0]) if embeddings else 0}")
+            if len(embeddings) > 0:
+                texts_per_sec = len(embeddings) / elapsed_time
+                logger.debug(f"   📈 Processing speed: {texts_per_sec:.1f} texts/second")
+            
+            # Log usage if available
+            if hasattr(response, 'usage') and response.usage:
+                logger.debug(f"   🎯 Tokens used: {response.usage.total_tokens}")
+            
+            return embeddings
         except Exception as e:
             if retry < max_retries - 1:
-                print(f"Error creating batch embeddings (attempt {retry + 1}/{max_retries}): {e}")
-                print(f"Retrying in {retry_delay} seconds...")
+                logger.warning(f"Attempt {retry + 1}/{max_retries} failed: {e}")
+                logger.info(f"Retrying in {retry_delay} seconds...")
                 time.sleep(retry_delay)
                 retry_delay *= 2  # Exponential backoff
             else:
-                print(f"Failed to create batch embeddings after {max_retries} attempts: {e}")
+                elapsed_time = time.time() - start_time
+                logger.error(f"❌ OpenAI batch embeddings failed after {max_retries} attempts and {elapsed_time:.2f}s: {e}")
                 # Try creating embeddings one by one as fallback
-                print("Attempting to create embeddings individually...")
+                logger.info("🔄 Attempting to create embeddings individually...")
                 embeddings = []
                 successful_count = 0
 
@@ -193,11 +260,14 @@ def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
                         embeddings.append(individual_response.data[0].embedding)
                         successful_count += 1
                     except Exception as individual_error:
-                        print(f"Failed to create embedding for text {i}: {individual_error}")
+                        logger.warning(f"Failed to create embedding for text {i}: {individual_error}")
                         # Add zero embedding as fallback
                         embeddings.append([0.0] * 1536)
 
-                print(f"Successfully created {successful_count}/{len(texts)} embeddings individually")
+                final_elapsed = time.time() - start_time
+                logger.info(f"✅ Individual embeddings completed!")
+                logger.info(f"   ⏱️  Total time: {final_elapsed:.2f}s")
+                logger.info(f"   📊 Success rate: {successful_count}/{len(texts)} embeddings")
                 return embeddings
 
 def create_chat_completion(
@@ -292,31 +362,87 @@ def create_embedding(text: str) -> List[float]:
     Returns:
         List of floats representing the embedding
     """
+    import logging
+    import time
+    
+    logger = logging.getLogger(__name__)
+    start_time = time.time()
+    
     # Check embedding preference order: Qwen -> Copilot -> OpenAI
     use_qwen = os.getenv("USE_QWEN_EMBEDDINGS", "false").lower() == "true"
     use_copilot = os.getenv("USE_COPILOT_EMBEDDINGS", "false").lower() == "true"
 
+    # Log single embedding invocation details
+    logger.info(f"🔗 Single Embedding Request")
+    logger.info(f"   📏 Text length: {len(text)} characters")
+    logger.debug(f"   📝 Text preview: {text[:100]}{'...' if len(text) > 100 else ''}")
+
     if use_qwen:
+        logger.info(f"   🤖 Provider: Local Qwen Embedding Model")
+        logger.info(f"   📋 Model: Qwen/Qwen3-Embedding-0.6B")
+        logger.info("🚀 Creating single embedding with Qwen...")
         try:
-            return create_embedding_qwen(text)
+            embedding = create_embedding_qwen(text)
+            elapsed_time = time.time() - start_time
+            logger.info(f"✅ Qwen single embedding successful!")
+            logger.info(f"   ⏱️  Response time: {elapsed_time:.2f}s")
+            logger.info(f"   📐 Embedding dimension: {len(embedding)}")
+            
+            # Check for non-zero embedding
+            non_zero_count = sum(1 for x in embedding if x != 0.0)
+            logger.debug(f"   📊 Non-zero values: {non_zero_count}/{len(embedding)}")
+            return embedding
         except Exception as e:
-            print(f"Error using Qwen for single embedding: {e}")
-            print("Falling back to batch method...")
+            elapsed_time = time.time() - start_time
+            logger.error(f"❌ Qwen single embedding failed after {elapsed_time:.2f}s: {e}")
+            logger.info("   🔄 Falling back to batch method...")
             # Fall through to batch method
 
     if use_copilot:
+        logger.info(f"   🤖 Provider: GitHub Copilot")
+        logger.info(f"   📋 Model: text-embedding-3-small")
+        logger.info("🚀 Creating single embedding with Copilot...")
         try:
-            return create_embedding_copilot(text)
+            embedding = create_embedding_copilot(text)
+            elapsed_time = time.time() - start_time
+            logger.info(f"✅ Copilot single embedding successful!")
+            logger.info(f"   ⏱️  Response time: {elapsed_time:.2f}s")
+            logger.info(f"   📐 Embedding dimension: {len(embedding)}")
+            
+            # Check for non-zero embedding
+            non_zero_count = sum(1 for x in embedding if x != 0.0)
+            logger.debug(f"   📊 Non-zero values: {non_zero_count}/{len(embedding)}")
+            return embedding
         except Exception as e:
-            print(f"Error using Copilot for single embedding: {e}")
-            print("Falling back to batch method...")
+            elapsed_time = time.time() - start_time
+            logger.error(f"❌ Copilot single embedding failed after {elapsed_time:.2f}s: {e}")
+            logger.info("   🔄 Falling back to batch method...")
             # Fall through to batch method
 
+    logger.info(f"   🤖 Provider: OpenAI (fallback)")
+    logger.info(f"   📋 Model: text-embedding-3-small")
+    logger.info("🚀 Creating single embedding with OpenAI...")
     try:
         embeddings = create_embeddings_batch([text])
-        return embeddings[0] if embeddings else [0.0] * 1536
+        embedding = embeddings[0] if embeddings else [0.0] * 1536
+        elapsed_time = time.time() - start_time
+        
+        if embedding and not all(x == 0.0 for x in embedding):
+            logger.info(f"✅ OpenAI single embedding successful!")
+            logger.info(f"   ⏱️  Response time: {elapsed_time:.2f}s")
+            logger.info(f"   📐 Embedding dimension: {len(embedding)}")
+            
+            # Check for non-zero embedding
+            non_zero_count = sum(1 for x in embedding if x != 0.0)
+            logger.debug(f"   📊 Non-zero values: {non_zero_count}/{len(embedding)}")
+        else:
+            logger.warning(f"⚠️  OpenAI returned zero embedding after {elapsed_time:.2f}s")
+        
+        return embedding
     except Exception as e:
-        print(f"Error creating embedding: {e}")
+        elapsed_time = time.time() - start_time
+        logger.error(f"❌ OpenAI single embedding failed after {elapsed_time:.2f}s: {e}")
+        logger.info("   🔄 Falling back to zero embedding")
         # Return empty embedding if there's an error
         return [0.0] * 1536
 

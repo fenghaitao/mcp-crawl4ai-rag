@@ -9,6 +9,7 @@ This module provides the main command-line interface that integrates:
 """
 
 import click
+import logging
 from typing import Optional
 
 from .utils import handle_cli_errors, get_config_value
@@ -17,6 +18,31 @@ from .rag import rag
 
 # Version information
 __version__ = "1.0.0"
+
+
+def setup_logging(verbose: bool = False):
+    """Configure logging for the CLI application."""
+    level = logging.DEBUG if verbose else logging.INFO
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%H:%M:%S'
+    )
+    
+    # Set specific loggers to appropriate levels
+    if not verbose:
+        # Reduce noise from third-party libraries in normal mode
+        logging.getLogger('httpx').setLevel(logging.WARNING)
+        logging.getLogger('httpcore').setLevel(logging.WARNING)
+        logging.getLogger('urllib3').setLevel(logging.WARNING)
+        logging.getLogger('asyncio').setLevel(logging.WARNING)
+        
+        # Keep our LLM logs visible even in non-verbose mode
+        logging.getLogger('llms.copilot_client').setLevel(logging.INFO)
+        logging.getLogger('llms.iflow_client').setLevel(logging.INFO)
+        logging.getLogger('llms.dashscope_client').setLevel(logging.INFO)
 
 
 @click.group()
@@ -34,6 +60,9 @@ def cli(ctx, verbose: bool, config: Optional[str]):
     ctx.ensure_object(dict)
     ctx.obj['verbose'] = verbose
     ctx.obj['config'] = config
+    
+    # Configure logging based on verbosity
+    setup_logging(verbose)
 
 
 # Register command groups
