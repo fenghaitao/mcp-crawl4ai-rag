@@ -47,16 +47,11 @@ def setup_logging(verbose: bool = False):
 
 @click.group()
 @click.version_option(version=__version__)
-@click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
-@click.option('--config', '-c', type=click.Path(exists=True), help='Custom configuration file')
+@click.option('-v', '--verbose', is_flag=True, help='Enable verbose output')
+@click.option('-c', '--config', type=click.Path(exists=True), help='Custom configuration file')
 @click.pass_context
 def cli(ctx, verbose: bool, config: Optional[str]):
-    """
-    Simics RAG CLI
-    
-    A unified command-line interface for managing Simics documentation processing
-    and RAG operations.
-    """
+    """Simics RAG CLI - Manage documentation processing and RAG operations."""
     ctx.ensure_object(dict)
     ctx.obj['verbose'] = verbose
     ctx.obj['config'] = config

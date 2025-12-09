@@ -2,9 +2,10 @@
 RAG pipeline CLI commands.
 
 This module provides commands for RAG operations including:
-- Content crawling and downloading
-- Document chunking and processing
-- RAG querying operations
+- Document ingestion and processing
+- Content chunking with embeddings
+- Semantic search and querying
+- File and chunk management
 """
 
 import click
@@ -16,7 +17,7 @@ from .utils import handle_cli_errors, verbose_echo
 
 @click.group()
 def rag():
-    """RAG pipeline operations (crawling, chunking, querying)."""
+    """RAG pipeline operations (ingestion, egestion, querying)."""
     pass
 
 
@@ -134,11 +135,11 @@ def query(ctx, query_text: str, limit: int, threshold: Optional[float], content_
 
 @rag.command()
 @click.argument('file_path', type=click.Path(exists=True))
-@click.option('--force', '-f', is_flag=True, help='Force re-processing: egest existing data and re-ingest')
+@click.option('-f', '--force', is_flag=True, help='Force re-processing (remove existing data and re-ingest)')
 @click.pass_context
 @handle_cli_errors
 def ingest_dml(ctx, file_path: str, force: bool):
-    """Ingest a DML source code file into the RAG system."""
+    """Ingest a DML source code file."""
     verbose_echo(ctx, "Ingesting DML source file...")
     
     click.echo(f"📄 DML file: {file_path}")
@@ -166,11 +167,11 @@ def ingest_dml(ctx, file_path: str, force: bool):
 
 @rag.command()
 @click.argument('file_path', type=click.Path(exists=True))
-@click.option('--force', '-f', is_flag=True, help='Force re-processing: egest existing data and re-ingest')
+@click.option('-f', '--force', is_flag=True, help='Force re-processing (remove existing data and re-ingest)')
 @click.pass_context
 @handle_cli_errors
 def ingest_python_test(ctx, file_path: str, force: bool):
-    """Ingest a Python test file into the RAG system."""
+    """Ingest a Python test file."""
     verbose_echo(ctx, "Ingesting Python test file...")
     
     click.echo(f"📄 Python test file: {file_path}")
@@ -198,11 +199,11 @@ def ingest_python_test(ctx, file_path: str, force: bool):
 
 @rag.command()
 @click.argument('file_path', type=click.Path(exists=True))
-@click.option('--force', '-f', is_flag=True, help='Force re-processing when content unchanged (regenerate summaries/embeddings)')
+@click.option('-f', '--force', is_flag=True, help='Force re-processing when content unchanged (regenerate summaries/embeddings)')
 @click.pass_context
 @handle_cli_errors
 def ingest_doc(ctx, file_path: str, force: bool):
-    """Ingest a documentation file into the RAG system."""
+    """Ingest a documentation file."""
     from ..backends.factory import get_backend
     from ..services.document_ingest_service import DocumentIngestService
     from ..services.git_service import GitService
@@ -267,12 +268,12 @@ def ingest_doc(ctx, file_path: str, force: bool):
 
 @rag.command()
 @click.argument('file_path', type=click.Path())
-@click.option('--format', '-f', type=click.Choice(['json', 'markdown', 'raw']),
+@click.option('-f', '--format', type=click.Choice(['json', 'markdown', 'raw']),
               default='json', help='Export format')
 @click.pass_context
 @handle_cli_errors
 def egest_dml(ctx, file_path: str, format: str):
-    """Export DML chunks and metadata to a file."""
+    """Egest (export) DML chunks and metadata to a file."""
     verbose_echo(ctx, "Exporting DML data...")
     
     click.echo(f"📄 Export file: {file_path}")
@@ -300,12 +301,12 @@ def egest_dml(ctx, file_path: str, format: str):
 
 @rag.command()
 @click.argument('file_path', type=click.Path())
-@click.option('--format', '-f', type=click.Choice(['json', 'markdown', 'raw']),
+@click.option('-f', '--format', type=click.Choice(['json', 'markdown', 'raw']),
               default='json', help='Export format')
 @click.pass_context
 @handle_cli_errors
 def egest_python_test(ctx, file_path: str, format: str):
-    """Export Python test chunks and metadata to a file."""
+    """Egest (export) Python test chunks and metadata to a file."""
     verbose_echo(ctx, "Exporting Python test data...")
     
     click.echo(f"📄 Export file: {file_path}")
@@ -346,11 +347,7 @@ def ingest_docs_dir(ctx, directory: str, pattern: str, recursive: bool,
     """Ingest multiple documentation files from a directory.
     
     Automatically skips files already in the database (unless --force is used).
-    Uses the database as the source of truth for tracking progress.
-    
-    Processing modes:
-    - Sequential (default): Process files one at a time
-    - Parallel (--parallel): Process multiple files concurrently for faster ingestion
+    Supports sequential or parallel processing modes.
     """
     from ..backends.factory import get_backend
     from ..services.git_service import GitService
@@ -462,7 +459,7 @@ def ingest_docs_dir(ctx, directory: str, pattern: str, recursive: bool,
 @handle_cli_errors
 def query_file(ctx, repo_url: str, file_path: str, commit: Optional[str], 
                timestamp: Optional[str], all_versions: bool, limit: int, json_output: bool):
-    """Query a specific file from the database with temporal constraints.
+    """Query a specific file with temporal constraints.
     
     By default, shows current version. Use --all-versions to see file history.
     Use --commit or --timestamp for temporal queries of specific versions.
@@ -829,14 +826,10 @@ def list_chunks(ctx, file_id: int, json_output: bool):
 @handle_cli_errors
 def egest_docs_dir(ctx, directory: str, pattern: str, recursive: bool, commit: Optional[str], 
                    dry_run: bool, confirm: bool, parallel: bool, workers: int):
-    """Remove multiple documentation files and their chunks from the database.
+    """Egest (remove) multiple documentation files and their chunks from the database.
     
-    Discovers files matching the pattern in the directory and removes them from the database.
     By default, removes ALL versions of each file. Use --commit to remove only a specific version.
-    
-    Processing modes:
-    - Sequential (default): Process files one at a time
-    - Parallel (--parallel): Process multiple files concurrently for faster removal
+    Supports sequential or parallel processing modes.
     """
     from ..backends.factory import get_backend
     from ..services.git_service import GitService
@@ -1152,14 +1145,14 @@ def egest_docs_dir(ctx, directory: str, pattern: str, recursive: bool, commit: O
 
 
 @rag.command()
-@click.option('--dry-run', is_flag=True, help='Show what would be cleaned without actually cleaning')
-@click.option('--confirm', '-c', is_flag=True, help='Skip confirmation prompt')
+@click.option('--dry-run', is_flag=True, help='Show what would be removed without actually removing')
+@click.option('-c', '--confirm', is_flag=True, help='Skip confirmation prompt')
 @click.pass_context
 @handle_cli_errors
 def cleanup_orphans(ctx, dry_run: bool, confirm: bool):
-    """Clean up orphaned chunks that have no corresponding file records.
+    """Clean up orphaned chunks that reference non-existent files.
     
-    Finds and removes chunks in the database that reference non-existent files.
+    Finds and removes chunks in the database that have no corresponding file records.
     This can happen when file removal operations are incomplete or interrupted.
     """
     from ..backends.factory import get_backend
@@ -1229,11 +1222,11 @@ def cleanup_orphans(ctx, dry_run: bool, confirm: bool):
 @rag.command()
 @click.argument('file_path', type=click.Path())
 @click.option('--commit', help='Remove only this specific commit version (default: remove all versions)')
-@click.option('--confirm', '-c', is_flag=True, help='Skip confirmation prompt')
+@click.option('-c', '--confirm', is_flag=True, help='Skip confirmation prompt')
 @click.pass_context
 @handle_cli_errors
 def egest_doc(ctx, file_path: str, commit: Optional[str], confirm: bool):
-    """Remove a documentation file and its chunks from the database.
+    """Egest (remove) a documentation file and its chunks from the database.
     
     By default, removes ALL versions of the file. Use --commit to remove only a specific version.
     """
