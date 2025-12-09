@@ -373,6 +373,7 @@ class TestCLIIntegration:
         # Verify new commands are registered (Click converts underscores to hyphens)
         assert 'ingest-docs-dir' in commands
         assert 'egest-docs-dir' in commands
+        assert 'cleanup-orphans' in commands
         assert 'query-file' in commands
         assert 'list-files' in commands
         assert 'file-history' in commands

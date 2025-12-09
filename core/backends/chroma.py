@@ -986,3 +986,54 @@ class ChromaBackend(DatabaseBackend):
             import traceback
             traceback.print_exc()
             return []
+
+    def cleanup_orphaned_chunks(self, dry_run: bool = False) -> Dict[str, Any]:
+        """Find and optionally remove orphaned chunks that have no corresponding file records."""
+        try:
+            chunks_collection = self._client.get_collection('content_chunks')
+            files_collection = self._client.get_collection('files')
+            
+            all_chunks = chunks_collection.get()
+            all_files = files_collection.get()
+            
+            # Get valid file IDs
+            valid_file_ids = set()
+            for metadata in all_files['metadatas']:
+                file_id = metadata.get('id')
+                if file_id:
+                    valid_file_ids.add(str(file_id))
+            
+            # Find orphaned chunks
+            orphaned_chunk_ids = []
+            orphan_groups = {}
+            
+            for i, chunk_id in enumerate(all_chunks['ids']):
+                metadata = all_chunks['metadatas'][i]
+                file_id = str(metadata.get('file_id', ''))
+                url = metadata.get('url', 'Unknown')
+                
+                if file_id not in valid_file_ids:
+                    orphaned_chunk_ids.append(chunk_id)
+                    
+                    if file_id not in orphan_groups:
+                        orphan_groups[file_id] = {'count': 0, 'url': url, 'chunk_ids': []}
+                    orphan_groups[file_id]['count'] += 1
+                    orphan_groups[file_id]['chunk_ids'].append(chunk_id)
+            
+            result = {
+                'total_chunks': len(all_chunks['ids']),
+                'valid_files': len(valid_file_ids),
+                'orphaned_chunks': len(orphaned_chunk_ids),
+                'orphan_groups': orphan_groups,
+                'removed': 0
+            }
+            
+            # Perform cleanup if not dry run
+            if not dry_run and orphaned_chunk_ids:
+                chunks_collection.delete(ids=orphaned_chunk_ids)
+                result['removed'] = len(orphaned_chunk_ids)
+            
+            return result
+            
+        except Exception as e:
+            raise Exception(f"Error during ChromaDB orphan cleanup: {e}")

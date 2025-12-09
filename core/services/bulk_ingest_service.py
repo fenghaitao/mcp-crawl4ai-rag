@@ -304,9 +304,16 @@ class BulkIngestService:
                     file_path_str, force, progress
                 )
                 
-                # Update metrics periodically
+                # Update metrics and show progress for every file with visual emphasis
+                progress.update_metrics()
+                print(f"\n{'='*60}")
+                print(f"🔄 PROGRESS: {progress.progress_percent:.1f}% ({progress.processed}/{progress.total_files})")
+                print(f"📄 Processing: {file_path.name}")
+                print(f"⏱️  Rate: {progress.files_per_second:.1f} files/sec")
+                print(f"{'='*60}\n")
+                
+                # Log detailed metrics periodically
                 if progress.processed % self.config.progress_save_interval == 0:
-                    progress.update_metrics()
                     self.logger.info(
                         f"Progress: {progress.progress_percent:.1f}% "
                         f"({progress.processed}/{progress.total_files}), "
@@ -379,10 +386,17 @@ class BulkIngestService:
                 except Exception as e:
                     self.logger.error(f"Unexpected error processing {file_path}: {e}")
                 
-                # Update metrics periodically
+                # Update metrics and show progress for every file with visual emphasis
                 with self._progress_lock:
+                    progress.update_metrics()
+                    print(f"\n{'='*60}")
+                    print(f"✅ PROGRESS: {progress.progress_percent:.1f}% ({progress.processed}/{progress.total_files})")
+                    print(f"📄 Completed: {file_path.name}")
+                    print(f"⏱️  Rate: {progress.files_per_second:.1f} files/sec")
+                    print(f"{'='*60}\n")
+                    
+                    # Log detailed metrics periodically
                     if progress.processed % self.config.progress_save_interval == 0:
-                        progress.update_metrics()
                         self.logger.info(
                             f"Progress: {progress.progress_percent:.1f}% "
                             f"({progress.processed}/{progress.total_files}), "
