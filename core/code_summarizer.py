@@ -355,12 +355,26 @@ Focus on what a developer would learn from this section.
 Summary:"""
     
     try:
-        response = create_chat_completion_iflow(
-            messages=[{"role": "user", "content": prompt}],
-            model=model,
-            temperature=0.3,
-            max_tokens=max_tokens
-        )
+        # Determine which client to use based on model prefix
+        if model.startswith("github_copilot/"):
+            # Use GitHub Copilot client
+            from llms.copilot_client import create_chat_completion_copilot
+            # Extract actual model name (e.g., "github_copilot/gpt-4o" -> "gpt-4o")
+            actual_model = model.split("/", 1)[1] if "/" in model else "gpt-4o"
+            response = create_chat_completion_copilot(
+                messages=[{"role": "user", "content": prompt}],
+                model=actual_model,
+                temperature=0.3,
+                max_tokens=max_tokens
+            )
+        else:
+            # Use iFlow client (default)
+            response = create_chat_completion_iflow(
+                messages=[{"role": "user", "content": prompt}],
+                model=model,
+                temperature=0.3,
+                max_tokens=max_tokens
+            )
         
         summary = response["choices"][0]["message"]["content"].strip()
         
