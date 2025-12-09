@@ -139,26 +139,81 @@ def query(ctx, query_text: str, limit: int, threshold: Optional[float], content_
 @click.pass_context
 @handle_cli_errors
 def ingest_dml(ctx, file_path: str, force: bool):
-    """Ingest a DML source code file."""
-    verbose_echo(ctx, "Ingesting DML source file...")
+    """Ingest DML source code file(s) into the RAG system.
     
-    click.echo(f"📄 DML file: {file_path}")
+    FILE_PATH can be either:
+    - A single .dml file
+    - A directory (will recursively process all .dml files)
+    """
+    from ..backends.factory import get_backend
+    from ..services.source_ingest_service import SourceIngestService
+    from ..services.git_service import GitService
+    from pathlib import Path
+    
+    verbose_echo(ctx, "Ingesting DML source file(s)...")
+    
+    path = Path(file_path)
+    is_directory = path.is_dir()
+    
+    click.echo(f"{'📁' if is_directory else '📄'} {'Directory' if is_directory else 'DML file'}: {file_path}")
     click.echo(f"🔄 Force re-processing: {'Yes' if force else 'No'}")
     
     try:
-        if force:
-            click.echo("🗑️ Force mode: Removing existing data for this file...")
-            # TODO: Egest/remove existing data for this specific file from database
+        # Get backend
+        backend_name = ctx.obj.get('db_backend')
+        backend = get_backend(backend_name)
         
-        click.echo("🚀 Starting DML file ingestion...")
-        click.echo("📋 Processing .dml file...")
-        click.echo("🧠 Generating embeddings...")
-        click.echo("💾 Storing in database...")
+        if not backend.is_connected():
+            click.echo("❌ Database not connected", err=True)
+            return
         
-        # TODO: Integrate with actual DML file processing logic
-        # This should process the single DML file
+        # Create git service and source ingest service
+        git_service = GitService()
+        service = SourceIngestService(backend, git_service)
         
-        click.echo("✅ DML file ingestion completed successfully!")
+        # Process the DML file(s)
+        result = service.ingest_source_file(file_path, source_type="dml", force_reprocess=force)
+        
+        # Display results
+        if result['success']:
+            if is_directory:
+                # Directory results
+                click.echo("\n✅ DML directory ingestion completed!")
+                click.echo(f"📊 Summary:")
+                click.echo(f"  - Total files: {result['total_files']}")
+                click.echo(f"  - Succeeded: {result['succeeded']}")
+                click.echo(f"  - Skipped: {result['skipped']}")
+                click.echo(f"  - Failed: {result['failed']}")
+                click.echo(f"  - Total time: {result['total_processing_time']:.2f}s")
+                
+                if result['errors']:
+                    click.echo(f"\n⚠️  Errors encountered:")
+                    for error in result['errors'][:5]:  # Show first 5 errors
+                        click.echo(f"  - {Path(error['file']).name}: {error['error']}")
+                    if len(result['errors']) > 5:
+                        click.echo(f"  ... and {len(result['errors']) - 5} more errors")
+            else:
+                # Single file results
+                if result.get('skipped', False):
+                    click.echo("⏭️  File already exists in database - skipped!")
+                    click.echo(f"📊 Existing file details:")
+                    click.echo(f"  - File ID: {result['file_id']}")
+                    click.echo(f"  - Chunks: {result['chunks_created']}")
+                    click.echo(f"  - Word count: {result['word_count']}")
+                    click.echo(f"  - Reason: {result.get('reason', 'File unchanged')}")
+                    click.echo(f"  - Check time: {result['processing_time']:.2f}s")
+                else:
+                    click.echo("✅ DML file ingestion completed successfully!")
+                    click.echo(f"📊 Results:")
+                    click.echo(f"  - File ID: {result['file_id']}")
+                    click.echo(f"  - Chunks created: {result['chunks_created']}")
+                    click.echo(f"  - Word count: {result['word_count']}")
+                    click.echo(f"  - Source type: {result.get('source_type', 'dml')}")
+                    click.echo(f"  - Source ID: {result.get('source_id', 'simics-dml')}")
+                    click.echo(f"  - Processing time: {result['processing_time']:.2f}s")
+        else:
+            click.echo(f"❌ Ingestion failed: {result['error']}", err=True)
+            raise Exception(result['error'])
         
     except Exception as e:
         click.echo(f"❌ Error during DML ingestion: {e}", err=True)
@@ -171,26 +226,108 @@ def ingest_dml(ctx, file_path: str, force: bool):
 @click.pass_context
 @handle_cli_errors
 def ingest_python_test(ctx, file_path: str, force: bool):
-    """Ingest a Python test file."""
-    verbose_echo(ctx, "Ingesting Python test file...")
+    """Ingest Python test file(s) into the RAG system.
     
-    click.echo(f"📄 Python test file: {file_path}")
+    FILE_PATH can be either:
+    - A single .py file
+    - A directory (will recursively process all .py files)
+    """
+    from ..backends.factory import get_backend
+    from ..services.source_ingest_service import SourceIngestService
+    from ..services.git_service import GitService
+    from pathlib import Path
+    
+    verbose_echo(ctx, "Ingesting Python test file(s)...")
+    
+    path = Path(file_path)
+    is_directory = path.is_dir()
+    
+    click.echo(f"{'📁' if is_directory else '📄'} {'Directory' if is_directory else 'Python test file'}: {file_path}")
     click.echo(f"🔄 Force re-processing: {'Yes' if force else 'No'}")
     
     try:
-        if force:
-            click.echo("🗑️ Force mode: Removing existing data for this file...")
-            # TODO: Egest/remove existing data for this specific file from database
+        # Get backend
+        backend_name = ctx.obj.get('db_backend')
+        backend = get_backend(backend_name)
         
-        click.echo("🚀 Starting Python test file ingestion...")
-        click.echo("🧪 Processing test file...")
-        click.echo("🧠 Generating embeddings...")
-        click.echo("💾 Storing in database...")
+        if not backend.is_connected():
+            click.echo("❌ Database not connected", err=True)
+            return
         
-        # TODO: Integrate with Python test file processing
-        # This should process the single Python test file
+        # Create git service and source ingest service
+        git_service = GitService()
+        service = SourceIngestService(backend, git_service)
         
-        click.echo("✅ Python test file ingestion completed successfully!")
+        # Process the Python test file(s)
+        result = service.ingest_source_file(file_path, source_type="python", force_reprocess=force)
+        
+        # Display results
+        if result['success']:
+            if is_directory:
+                # Directory results
+                click.echo("\n✅ Python directory ingestion completed!")
+                click.echo(f"📊 Summary:")
+                click.echo(f"  - Total files: {result['total_files']}")
+                click.echo(f"  - Succeeded: {result['succeeded']}")
+                click.echo(f"  - Skipped: {result['skipped']}")
+                click.echo(f"  - Failed: {result['failed']}")
+                click.echo(f"  - Total time: {result['total_processing_time']:.2f}s")
+                
+                if result['errors']:
+                    click.echo(f"\n⚠️  Errors encountered:")
+                    for error in result['errors'][:5]:  # Show first 5 errors
+                        click.echo(f"  - {Path(error['file']).name}: {error['error']}")
+                    if len(result['errors']) > 5:
+                        click.echo(f"  ... and {len(result['errors']) - 5} more errors")
+            else:
+                # Single file results
+                if result.get('skipped', False):
+                    click.echo("⏭️  File already exists in database - skipped!")
+                    click.echo(f"📊 Existing file details:")
+                    click.echo(f"  - File ID: {result['file_id']}")
+                    click.echo(f"  - Chunks: {result['chunks_created']}")
+                    click.echo(f"  - Word count: {result['word_count']}")
+                    click.echo(f"  - Reason: {result.get('reason', 'File unchanged')}")
+                    click.echo(f"  - Check time: {result['processing_time']:.2f}s")
+                else:
+                    click.echo("✅ Python test file ingestion completed successfully!")
+                    click.echo(f"📊 Results:")
+                    click.echo(f"  - File ID: {result['file_id']}")
+                    click.echo(f"  - Chunks created: {result['chunks_created']}")
+                    click.echo(f"  - Word count: {result['word_count']}")
+                    click.echo(f"  - Source type: {result.get('source_type', 'python')}")
+                    click.echo(f"  - Source ID: {result.get('source_id', 'simics-python')}")
+                    click.echo(f"  - Processing time: {result['processing_time']:.2f}s")
+        else:
+            click.echo(f"❌ Ingestion failed: {result['error']}", err=True)
+            raise Exception(result['error'])
+        
+    except Exception as e:
+        click.echo(f"❌ Error during Python test ingestion: {e}", err=True)
+        raise
+        
+        # Display results
+        if result['success']:
+            if result.get('skipped', False):
+                click.echo("⏭️  File already exists in database - skipped!")
+                click.echo(f"📊 Existing file details:")
+                click.echo(f"  - File ID: {result['file_id']}")
+                click.echo(f"  - Chunks: {result['chunks_created']}")
+                click.echo(f"  - Word count: {result['word_count']}")
+                click.echo(f"  - Reason: {result.get('reason', 'File unchanged')}")
+                click.echo(f"  - Check time: {result['processing_time']:.2f}s")
+            else:
+                click.echo("✅ Python test file ingestion completed successfully!")
+                click.echo(f"📊 Results:")
+                click.echo(f"  - File ID: {result['file_id']}")
+                click.echo(f"  - Chunks created: {result['chunks_created']}")
+                click.echo(f"  - Word count: {result['word_count']}")
+                click.echo(f"  - Source type: {result.get('source_type', 'python')}")
+                click.echo(f"  - Source ID: {result.get('source_id', 'simics-python')}")
+                click.echo(f"  - Processing time: {result['processing_time']:.2f}s")
+        else:
+            click.echo(f"❌ Ingestion failed: {result['error']}", err=True)
+            raise Exception(result['error'])
         
     except Exception as e:
         click.echo(f"❌ Error during Python test ingestion: {e}", err=True)
