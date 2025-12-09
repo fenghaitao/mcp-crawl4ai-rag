@@ -1175,171 +1175,51 @@ def cleanup_orphans(ctx, dry_run: bool, confirm: bool):
             click.echo("❌ Database not connected", err=True)
             return
         
-        # Get all chunks and files - support both ChromaDB and Supabase
-        if hasattr(backend, '_client'):  # ChromaDB backend
-            click.echo("🔍 Analyzing ChromaDB collections...")
-            chunks_collection = backend._client.get_collection('content_chunks')
-            files_collection = backend._client.get_collection('files')
-            
-            all_chunks = chunks_collection.get()
-            all_files = files_collection.get()
-            
-            # Get valid file IDs
-            valid_file_ids = set()
-            for metadata in all_files['metadatas']:
-                file_id = metadata.get('id')
-                if file_id:
-                    valid_file_ids.add(str(file_id))
-            
-            # Find orphaned chunks
-            orphaned_chunk_ids = []
-            orphan_groups = {}
-            
-            for i, chunk_id in enumerate(all_chunks['ids']):
-                metadata = all_chunks['metadatas'][i]
-                file_id = str(metadata.get('file_id', ''))
-                url = metadata.get('url', 'Unknown')
-                
-                if file_id not in valid_file_ids:
-                    orphaned_chunk_ids.append(chunk_id)
-                    
-                    if file_id not in orphan_groups:
-                        orphan_groups[file_id] = {'count': 0, 'url': url}
-                    orphan_groups[file_id]['count'] += 1
-            
-            click.echo(f"📊 Database Analysis:")
-            click.echo(f"   Total chunks: {len(all_chunks['ids'])}")
-            click.echo(f"   Valid files: {len(valid_file_ids)}")
-            click.echo(f"   Orphaned chunks: {len(orphaned_chunk_ids)}")
-            
-            if orphan_groups:
-                click.echo(f"\n📋 Orphaned chunks by file:")
-                for file_id, info in orphan_groups.items():
-                    click.echo(f"   File ID {file_id}: {info['count']} chunks ({info['url']})")
-            
-            if not orphaned_chunk_ids:
-                click.echo("\n✅ No orphaned chunks found - database is clean!")
-                return
-            
-            if dry_run:
-                click.echo(f"\n🧪 Dry run - would remove {len(orphaned_chunk_ids)} orphaned chunks")
-                return
-            
-            # Confirm cleanup unless --confirm flag
-            if not confirm:
-                click.echo(f"\n⚠️  This will permanently remove {len(orphaned_chunk_ids)} orphaned chunks:")
-                for file_id, info in orphan_groups.items():
-                    click.echo(f"   - File ID {file_id}: {info['count']} chunks")
-                
-                if not click.confirm("\nAre you sure you want to proceed?"):
-                    click.echo("❌ Operation cancelled")
-                    return
-            
-            # Remove orphaned chunks
-            click.echo(f"\n🧹 Cleaning up {len(orphaned_chunk_ids)} orphaned chunks...")
-            chunks_collection.delete(ids=orphaned_chunk_ids)
-            
-            # Verify cleanup
-            remaining_chunks = chunks_collection.get()
-            click.echo(f"✅ Cleanup completed!")
-            click.echo(f"   Chunks before: {len(all_chunks['ids'])}")
-            click.echo(f"   Chunks after: {len(remaining_chunks['ids'])}")
-            click.echo(f"   Removed: {len(orphaned_chunk_ids)}")
-            
-        elif hasattr(backend, '_supabase'):  # Supabase backend
-            click.echo("🔍 Analyzing Supabase database...")
-            
-            try:
-                # Get all chunks and files from Supabase
-                chunks_response = backend._supabase.table('content_chunks').select('id, file_id, url').execute()
-                files_response = backend._supabase.table('files').select('id').execute()
-                
-                all_chunks = chunks_response.data
-                all_files = files_response.data
-                
-                # Get valid file IDs
-                valid_file_ids = {str(f['id']) for f in all_files}
-                
-                # Find orphaned chunks
-                orphaned_chunks = []
-                orphan_groups = {}
-                
-                for chunk in all_chunks:
-                    file_id = str(chunk.get('file_id', ''))
-                    url = chunk.get('url', 'Unknown')
-                    
-                    if file_id not in valid_file_ids:
-                        orphaned_chunks.append(chunk)
-                        
-                        if file_id not in orphan_groups:
-                            orphan_groups[file_id] = {'count': 0, 'url': url, 'chunk_ids': []}
-                        orphan_groups[file_id]['count'] += 1
-                        orphan_groups[file_id]['chunk_ids'].append(chunk['id'])
-                
-                click.echo(f"📊 Database Analysis:")
-                click.echo(f"   Total chunks: {len(all_chunks)}")
-                click.echo(f"   Valid files: {len(valid_file_ids)}")
-                click.echo(f"   Orphaned chunks: {len(orphaned_chunks)}")
-                
-                if orphan_groups:
-                    click.echo(f"\n📋 Orphaned chunks by file:")
-                    for file_id, info in orphan_groups.items():
-                        click.echo(f"   File ID {file_id}: {info['count']} chunks ({info['url']})")
-                
-                if not orphaned_chunks:
-                    click.echo("\n✅ No orphaned chunks found - database is clean!")
-                    return
-                
-                if dry_run:
-                    click.echo(f"\n🧪 Dry run - would remove {len(orphaned_chunks)} orphaned chunks")
-                    return
-                
-                # Confirm cleanup unless --confirm flag
-                if not confirm:
-                    click.echo(f"\n⚠️  This will permanently remove {len(orphaned_chunks)} orphaned chunks:")
-                    for file_id, info in orphan_groups.items():
-                        click.echo(f"   - File ID {file_id}: {info['count']} chunks")
-                    
-                    if not click.confirm("\nAre you sure you want to proceed?"):
-                        click.echo("❌ Operation cancelled")
-                        return
-                
-                # Remove orphaned chunks from Supabase
-                click.echo(f"\n🧹 Cleaning up {len(orphaned_chunks)} orphaned chunks...")
-                
-                # Batch delete in groups of 100 for efficiency
-                batch_size = 100
-                total_removed = 0
-                
-                for file_id, info in orphan_groups.items():
-                    chunk_ids = info['chunk_ids']
-                    for i in range(0, len(chunk_ids), batch_size):
-                        batch = chunk_ids[i:i + batch_size]
-                        result = backend._supabase.table('content_chunks').delete().in_('id', batch).execute()
-                        if hasattr(result, 'data') and result.data:
-                            total_removed += len(result.data)
-                        else:
-                            # Fallback: assume all were deleted if response format differs
-                            total_removed += len(batch)
-                
-                # Verify cleanup
-                remaining_response = backend._supabase.table('content_chunks').select('id', count='exact').execute()
-                remaining_count = remaining_response.count if hasattr(remaining_response, 'count') else len(remaining_response.data)
-                
-                click.echo(f"✅ Cleanup completed!")
-                click.echo(f"   Chunks before: {len(all_chunks)}")
-                click.echo(f"   Chunks after: {remaining_count}")
-                click.echo(f"   Removed: {total_removed}")
-                
-            except Exception as e:
-                click.echo(f"❌ Error accessing Supabase database: {e}", err=True)
-                click.echo("   Make sure your Supabase credentials are correctly configured.", err=True)
-                return
-                
-        else:
-            click.echo("❌ Backend type not recognized for cleanup operation", err=True)
-            click.echo("   Supported backends: ChromaDB, Supabase", err=True)
+        # Detect backend type for display
+        backend_type = backend.get_backend_name()
+        click.echo(f"🔍 Analyzing {backend_type} database...")
+        
+        # Run analysis (dry run first to get stats)
+        analysis = backend.cleanup_orphaned_chunks(dry_run=True)
+        
+        # Display analysis results
+        click.echo(f"📊 Database Analysis:")
+        click.echo(f"   Total chunks: {analysis['total_chunks']}")
+        click.echo(f"   Valid files: {analysis['valid_files']}")
+        click.echo(f"   Orphaned chunks: {analysis['orphaned_chunks']}")
+        
+        if analysis['orphan_groups']:
+            click.echo(f"\n📋 Orphaned chunks by file:")
+            for file_id, info in analysis['orphan_groups'].items():
+                click.echo(f"   File ID {file_id}: {info['count']} chunks ({info['url']})")
+        
+        if analysis['orphaned_chunks'] == 0:
+            click.echo("\n✅ No orphaned chunks found - database is clean!")
             return
+        
+        if dry_run:
+            click.echo(f"\n🧪 Dry run - would remove {analysis['orphaned_chunks']} orphaned chunks")
+            return
+        
+        # Confirm cleanup unless --confirm flag
+        if not confirm:
+            click.echo(f"\n⚠️  This will permanently remove {analysis['orphaned_chunks']} orphaned chunks:")
+            for file_id, info in analysis['orphan_groups'].items():
+                click.echo(f"   - File ID {file_id}: {info['count']} chunks")
+            
+            if not click.confirm("\nAre you sure you want to proceed?"):
+                click.echo("❌ Operation cancelled")
+                return
+        
+        # Perform actual cleanup
+        click.echo(f"\n🧹 Cleaning up {analysis['orphaned_chunks']} orphaned chunks...")
+        result = backend.cleanup_orphaned_chunks(dry_run=False)
+        
+        # Display results
+        click.echo(f"✅ Cleanup completed!")
+        click.echo(f"   Chunks before: {result['total_chunks']}")
+        click.echo(f"   Chunks after: {result['total_chunks'] - result['removed']}")
+        click.echo(f"   Removed: {result['removed']}")
             
     except Exception as e:
         click.echo(f"\n❌ Error during cleanup: {e}", err=True)

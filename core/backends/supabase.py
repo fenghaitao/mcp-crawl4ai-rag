@@ -735,3 +735,64 @@ class SupabaseBackend(DatabaseBackend):
             import traceback
             traceback.print_exc()
             return []
+    
+    def cleanup_orphaned_chunks(self, dry_run: bool = False) -> Dict[str, Any]:
+        """Find and optionally remove orphaned chunks that have no corresponding file records."""
+        try:
+            # Get all chunks and files from Supabase
+            chunks_response = self._client.table('content_chunks').select('id, file_id, url').execute()
+            files_response = self._client.table('files').select('id').execute()
+            
+            all_chunks = chunks_response.data
+            all_files = files_response.data
+            
+            # Get valid file IDs
+            valid_file_ids = {str(f['id']) for f in all_files}
+            
+            # Find orphaned chunks
+            orphaned_chunks = []
+            orphan_groups = {}
+            
+            for chunk in all_chunks:
+                file_id = str(chunk.get('file_id', ''))
+                url = chunk.get('url', 'Unknown')
+                
+                if file_id not in valid_file_ids:
+                    orphaned_chunks.append(chunk)
+                    
+                    if file_id not in orphan_groups:
+                        orphan_groups[file_id] = {'count': 0, 'url': url, 'chunk_ids': []}
+                    orphan_groups[file_id]['count'] += 1
+                    orphan_groups[file_id]['chunk_ids'].append(chunk['id'])
+            
+            result = {
+                'total_chunks': len(all_chunks),
+                'valid_files': len(valid_file_ids),
+                'orphaned_chunks': len(orphaned_chunks),
+                'orphan_groups': orphan_groups,
+                'removed': 0
+            }
+            
+            # Perform cleanup if not dry run
+            if not dry_run and orphaned_chunks:
+                # Batch delete in groups of 100 for efficiency
+                batch_size = 100
+                total_removed = 0
+                
+                for file_id, info in orphan_groups.items():
+                    chunk_ids = info['chunk_ids']
+                    for i in range(0, len(chunk_ids), batch_size):
+                        batch = chunk_ids[i:i + batch_size]
+                        delete_result = self._client.table('content_chunks').delete().in_('id', batch).execute()
+                        if hasattr(delete_result, 'data') and delete_result.data:
+                            total_removed += len(delete_result.data)
+                        else:
+                            # Fallback: assume all were deleted if response format differs
+                            total_removed += len(batch)
+                
+                result['removed'] = total_removed
+            
+            return result
+            
+        except Exception as e:
+            raise Exception(f"Error during Supabase orphan cleanup: {e}")

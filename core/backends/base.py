@@ -325,3 +325,21 @@ class DatabaseBackend(ABC):
             List of chunk dictionaries ordered by chunk_number
         """
         pass
+    
+    @abstractmethod
+    def cleanup_orphaned_chunks(self, dry_run: bool = False) -> Dict[str, Any]:
+        """
+        Find and optionally remove orphaned chunks that have no corresponding file records.
+        
+        Args:
+            dry_run: If True, only analyze without removing chunks
+            
+        Returns:
+            Dict with statistics about orphaned chunks:
+                - total_chunks: Total number of chunks in database
+                - valid_files: Number of valid file records
+                - orphaned_chunks: Number of orphaned chunks found
+                - orphan_groups: Dict grouping orphans by file_id
+                - removed: Number of chunks removed (0 if dry_run)
+        """
+        pass
