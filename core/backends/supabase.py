@@ -467,22 +467,34 @@ class SupabaseBackend(DatabaseBackend):
         chunk_records = []
         
         for i, chunk in enumerate(chunks):
-            # Convert ProcessedChunk to database record
-            word_count = chunk.metadata.char_count // 5  # Rough word count estimate
+            # Convert ProcessedChunk to database record - safely access attributes
+            # Safely get content (handle None)
+            content = chunk.content if chunk.content else ''
+            char_count = getattr(chunk.metadata, 'char_count', len(content))
+            word_count = char_count // 5  # Rough word count estimate
+            
+            # Get content_type from metadata or default to 'documentation'
+            content_type = getattr(chunk.metadata, 'content_type', 'documentation')
+            
+            # Get heading hierarchy and code attributes safely
+            heading_hierarchy = getattr(chunk.metadata, 'heading_hierarchy', [])
+            contains_code = getattr(chunk.metadata, 'contains_code', False)
+            code_languages = getattr(chunk.metadata, 'code_languages', [])
+            
             chunk_data = {
                 'file_id': file_id,
                 'url': file_path,
                 'chunk_number': i,
-                'content': chunk.content,
-                'content_type': 'documentation',
+                'content': content,
+                'content_type': content_type,
                 'summary': chunk.summary if chunk.summary else None,
                 'metadata': {
-                    'title': chunk.metadata.heading_hierarchy[-1] if chunk.metadata.heading_hierarchy else '',
-                    'section': ' > '.join(chunk.metadata.heading_hierarchy),
+                    'title': heading_hierarchy[-1] if heading_hierarchy else '',
+                    'section': ' > '.join(heading_hierarchy),
                     'word_count': word_count,
-                    'has_code': chunk.metadata.contains_code,
-                    'heading_hierarchy': chunk.metadata.heading_hierarchy,  # Keep as list for Supabase JSONB
-                    'language_hints': chunk.metadata.code_languages if chunk.metadata.code_languages else []  # Keep as list for Supabase JSONB
+                    'has_code': contains_code,
+                    'heading_hierarchy': heading_hierarchy,  # Keep as list for Supabase JSONB
+                    'language_hints': code_languages if code_languages else []  # Keep as list for Supabase JSONB
                 },
                 'embedding': chunk.embedding if chunk.embedding else None
             }

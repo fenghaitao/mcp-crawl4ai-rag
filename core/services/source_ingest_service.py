@@ -707,7 +707,7 @@ class SourceIngestService:
             # Store chunks (embeddings already generated)
             logging.info(f"   💾 Step 6: Storing chunks in database...")
             result = self.backend.store_chunks(file_id, chunks_to_store, file_path)
-            logging.info(f"      ✓ Stored chunks successfully: {result.get('chunks_stored', 0)} chunks")
+            logging.info(f"      ✓ Stored chunks successfully: {result.get('chunks', 0)} chunks")
             
             processing_time = (datetime.now() - start_time).total_seconds()
             
@@ -716,7 +716,7 @@ class SourceIngestService:
             return {
                 'success': True,
                 'file_id': file_id,
-                'chunks_created': result.get('chunks_stored', len(chunks_to_store)),
+                'chunks_created': result.get('chunks', len(chunks_to_store)),
                 'word_count': sum(len(c.content.split()) for c in chunks_to_store),
                 'processing_time': processing_time,
                 'source_type': source_type,

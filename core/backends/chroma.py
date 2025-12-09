@@ -420,16 +420,27 @@ class ChromaBackend(DatabaseBackend):
         for i, chunk in enumerate(chunks):
             chunk_id = f"{file_id}_chunk_{i}"
             chunk_ids.append(chunk_id)
-            chunk_documents.append(chunk.content)
             
-            # Prepare metadata
-            word_count = chunk.metadata.char_count // 5  # Rough word count estimate
+            # Safely get content (handle None)
+            content = chunk.content if chunk.content else ''
+            chunk_documents.append(content)
+            
+            # Prepare metadata - safely access attributes that may not exist
+            char_count = getattr(chunk.metadata, 'char_count', len(content))
+            word_count = char_count // 5  # Rough word count estimate
             
             # Get content_type from metadata or default to 'documentation'
-            content_type = getattr(chunk.metadata, 'content_type', None) or chunk.metadata._data.get('content_type', 'documentation')
+            content_type = getattr(chunk.metadata, 'content_type', 'documentation')
             
             # Get source_id if available (for source code files)
-            source_id = getattr(chunk.metadata, 'source_id', None) or chunk.metadata._data.get('source_id', '')
+            source_id = getattr(chunk.metadata, 'source_id', '')
+            
+            # Get heading hierarchy safely
+            heading_hierarchy = getattr(chunk.metadata, 'heading_hierarchy', [])
+            
+            # Get code-related attributes safely
+            contains_code = getattr(chunk.metadata, 'contains_code', False)
+            code_languages = getattr(chunk.metadata, 'code_languages', [])
             
             metadata = {
                 'file_id': file_id,
@@ -437,12 +448,12 @@ class ChromaBackend(DatabaseBackend):
                 'chunk_number': i,
                 'content_type': content_type,
                 'summary': chunk.summary if chunk.summary else '',
-                'title': chunk.metadata.heading_hierarchy[-1] if chunk.metadata.heading_hierarchy else '',
-                'section': ' > '.join(chunk.metadata.heading_hierarchy),
+                'title': heading_hierarchy[-1] if heading_hierarchy else '',
+                'section': ' > '.join(heading_hierarchy),
                 'word_count': word_count,
-                'has_code': chunk.metadata.contains_code,
-                'heading_hierarchy': ' > '.join(chunk.metadata.heading_hierarchy),  # Convert list to string
-                'language_hints': ', '.join(chunk.metadata.code_languages) if chunk.metadata.code_languages else '',  # Convert list to string
+                'has_code': contains_code,
+                'heading_hierarchy': ' > '.join(heading_hierarchy),  # Convert list to string
+                'language_hints': ', '.join(code_languages) if code_languages else '',  # Convert list to string
                 'source_id': source_id  # Add source_id for filtering
             }
             chunk_metadatas.append(metadata)
@@ -475,7 +486,7 @@ class ChromaBackend(DatabaseBackend):
                     metadatas=chunk_metadatas
                 )
         
-        return {'chunks_stored': total_chunks, 'words': total_words}
+        return {'chunks': total_chunks, 'words': total_words}
     
     def update_file_statistics(self, file_id: str, chunk_count: int, word_count: int) -> bool:
         """Update file record with processing statistics."""

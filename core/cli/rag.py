@@ -440,18 +440,33 @@ def ingest_python(ctx, file_path: str, force: bool, test_only: bool, skip_test: 
 @rag.command()
 @click.argument('file_path', type=click.Path(exists=True))
 @click.option('-f', '--force', is_flag=True, help='Force re-processing when content unchanged (regenerate summaries/embeddings)')
+@click.option('--pattern', '-p', default='*.md', help='File pattern to match for directories (e.g., *.md, *.html, *.rst)')
+@click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively (for directories)')
 @click.pass_context
 @handle_cli_errors
-def ingest_doc(ctx, file_path: str, force: bool):
-    """Ingest a documentation file."""
+def ingest_doc(ctx, file_path: str, force: bool, pattern: str, recursive: bool):
+    """Ingest documentation file(s) into the RAG system.
+    
+    FILE_PATH can be either:
+    - A single documentation file (.md, .html, .rst, etc.)
+    - A directory (will process all matching files)
+    """
     from ..backends.factory import get_backend
     from ..services.document_ingest_service import DocumentIngestService
     from ..services.git_service import GitService
+    from pathlib import Path
+    from datetime import datetime
     
-    verbose_echo(ctx, "Ingesting documentation file...")
+    verbose_echo(ctx, "Ingesting documentation file(s)...")
     
-    click.echo(f"📄 Documentation file: {file_path}")
+    path = Path(file_path)
+    is_directory = path.is_dir()
+    
+    click.echo(f"{'📁' if is_directory else '📄'} {'Directory' if is_directory else 'Documentation file'}: {file_path}")
     click.echo(f"🔄 Force re-processing: {'Yes' if force else 'No'}")
+    if is_directory:
+        click.echo(f"🔍 Pattern: {pattern}")
+        click.echo(f"📂 Recursive: {'Yes' if recursive else 'No'}")
     
     try:
         # Get backend
@@ -466,40 +481,111 @@ def ingest_doc(ctx, file_path: str, force: bool):
         git_service = GitService()
         service = DocumentIngestService(backend, git_service)
         
-        # Process the document
-        result = service.ingest_document(file_path, force_reprocess=force)
+        # Handle directory vs single file
+        if is_directory:
+            # Find all matching files in directory
+            if recursive:
+                files = list(path.rglob(pattern))
+            else:
+                files = list(path.glob(pattern))
+            
+            if not files:
+                click.echo(f"❌ No files matching '{pattern}' found in {file_path}", err=True)
+                return
+        else:
+            files = [path]
+        
+        click.echo(f"📁 Found {len(files)} documentation file(s)")
+        click.echo()
+        
+        # Process each file
+        results = {
+            'success': True,
+            'total_files': len(files),
+            'processed': 0,
+            'succeeded': 0,
+            'skipped': 0,
+            'failed': 0,
+            'errors': [],
+            'files': []
+        }
+        
+        start_time = datetime.now()
+        
+        for i, file_path_obj in enumerate(files, 1):
+            click.echo(f"[{i}/{len(files)}] Processing: {file_path_obj.name}")
+            
+            try:
+                result = service.ingest_document(str(file_path_obj), force_reprocess=force)
+                results['processed'] += 1
+                
+                # Check if file was skipped or processed
+                if result['success']:
+                    if result.get('skipped'):
+                        results['skipped'] += 1
+                        click.echo(f"  ⏭️  Skipped: {result.get('reason', 'Content unchanged')}")
+                        if result.get('file_id'):
+                            click.echo(f"      File ID: {result.get('file_id', 'N/A')}")
+                            click.echo(f"      Chunks: {result.get('chunks_created', 0)}")
+                            click.echo(f"      Words: {result.get('word_count', 0)}")
+                            click.echo(f"      Time: {result.get('processing_time', 0):.2f}s")
+                    else:
+                        results['succeeded'] += 1
+                        status = 'Re-processed' if result.get('reprocessed') else 'Success'
+                        click.echo(f"  ✅ {status}: {result['chunks_created']} chunks created")
+                        click.echo(f"      File ID: {result.get('file_id', 'N/A')}")
+                        click.echo(f"      Words: {result.get('word_count', 0)}")
+                        click.echo(f"      Time: {result.get('processing_time', 0):.2f}s")
+                        if result.get('new_version'):
+                            click.echo(f"      Status: New version (content changed)")
+                else:
+                    results['failed'] += 1
+                    results['errors'].append({
+                        'file': str(file_path_obj),
+                        'error': result.get('error', 'Unknown error')
+                    })
+                    click.echo(f"  ❌ Failed: {result.get('error', 'Unknown')}")
+                
+                results['files'].append({
+                    'file': str(file_path_obj),
+                    'status': 'skipped' if result.get('skipped') else ('success' if result['success'] else 'failed'),
+                    'chunks': result.get('chunks_created', 0),
+                    'processing_time': result.get('processing_time', 0)
+                })
+                
+            except Exception as e:
+                click.echo(f"  ❌ Unexpected error: {e}")
+                results['failed'] += 1
+                results['errors'].append({
+                    'file': str(file_path_obj),
+                    'error': str(e)
+                })
+        
+        total_time = (datetime.now() - start_time).total_seconds()
+        results['total_processing_time'] = total_time
         
         # Display results
-        if result['success']:
-            if result.get('skipped', False):
-                click.echo("⏭️  Content unchanged - skipped!")
-                click.echo(f"📊 Existing file details:")
-                click.echo(f"  - File ID: {result['file_id']}")
-                click.echo(f"  - Chunks: {result['chunks_created']}")
-                click.echo(f"  - Word count: {result['word_count']}")
-                click.echo(f"  - Reason: {result.get('reason', 'Content unchanged')}")
-                click.echo(f"  - Check time: {result['processing_time']:.2f}s")
-                click.echo(f"\n💡 Tip: Use -f to force re-processing (regenerate summaries/embeddings)")
-            elif result.get('reprocessed', False):
-                click.echo("🔄 Content unchanged - re-processed with force flag!")
-                click.echo(f"📊 Results:")
-                click.echo(f"  - File ID: {result['file_id']}")
-                click.echo(f"  - Chunks re-created: {result['chunks_created']}")
-                click.echo(f"  - Word count: {result['word_count']}")
-                click.echo(f"  - Processing time: {result['processing_time']:.2f}s")
-                click.echo(f"  - Reason: {result.get('reason', 'Re-processed')}")
-            else:
-                click.echo("✅ Documentation file ingestion completed successfully!")
-                click.echo(f"📊 Results:")
-                click.echo(f"  - File ID: {result['file_id']}")
-                click.echo(f"  - Chunks created: {result['chunks_created']}")
-                click.echo(f"  - Word count: {result['word_count']}")
-                click.echo(f"  - Processing time: {result['processing_time']:.2f}s")
-                if result.get('new_version'):
-                    click.echo(f"  - Status: New version created (content changed)")
-        else:
-            click.echo(f"❌ Ingestion failed: {result['error']}", err=True)
-            raise Exception(result['error'])
+        click.echo()
+        if is_directory or len(files) > 1:
+            click.echo("✅ Documentation ingestion completed!")
+            click.echo(f"📊 Summary:")
+            click.echo(f"  - Total files: {results['total_files']}")
+            click.echo(f"  - Succeeded: {results['succeeded']}")
+            click.echo(f"  - Skipped: {results['skipped']}")
+            click.echo(f"  - Failed: {results['failed']}")
+            click.echo(f"  - Total time: {results['total_processing_time']:.2f}s")
+            
+            if results['errors']:
+                click.echo(f"\n⚠️  Errors encountered:")
+                for error in results['errors'][:5]:  # Show first 5 errors
+                    click.echo(f"  - {Path(error['file']).name}: {error['error']}")
+                if len(results['errors']) > 5:
+                    click.echo(f"  ... and {len(results['errors']) - 5} more errors")
+        
+        if results['failed'] > 0 and len(files) == 1:
+            error_msg = results['errors'][0]['error'] if results['errors'] else 'Unknown error'
+            click.echo(f"❌ Ingestion failed: {error_msg}", err=True)
+            raise Exception(error_msg)
         
     except Exception as e:
         click.echo(f"❌ Error during documentation ingestion: {e}", err=True)
@@ -569,121 +655,6 @@ def egest_python_test(ctx, file_path: str, format: str):
         
     except Exception as e:
         click.echo(f"❌ Error during Python test export: {e}", err=True)
-        raise
-
-
-@rag.command()
-@click.argument('directory', type=click.Path(exists=True, file_okay=False, dir_okay=True))
-@click.option('--pattern', '-p', default='*.md', help='File pattern to match (e.g., *.md,*.html,*.rst)')
-@click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
-@click.option('--force', '-f', is_flag=True, help='Force reprocess existing files')
-@click.option('--dry-run', is_flag=True, help='Validate files without processing')
-@click.option('--parallel', is_flag=True, help='Enable parallel processing (faster but uses more resources)')
-@click.option('--workers', '-w', type=int, default=4, help='Number of parallel workers (default: 4)')
-@click.pass_context
-@handle_cli_errors
-def ingest_docs_dir(ctx, directory: str, pattern: str, recursive: bool, 
-                    force: bool, dry_run: bool, parallel: bool, workers: int):
-    """Ingest multiple documentation files from a directory.
-    
-    Automatically skips files already in the database (unless --force is used).
-    Supports sequential or parallel processing modes.
-    """
-    from ..backends.factory import get_backend
-    from ..services.git_service import GitService
-    from ..services.document_ingest_service import DocumentIngestService
-    from ..services.bulk_ingest_service import BulkIngestService
-    from pathlib import Path
-    import time
-    
-    verbose_echo(ctx, "Starting bulk documentation ingestion...")
-    
-    dir_path = Path(directory)
-    click.echo(f"📁 Directory: {dir_path}")
-    click.echo(f"🔍 Pattern: {pattern}")
-    click.echo(f"📂 Recursive: {'Yes' if recursive else 'No'}")
-    click.echo(f"🔄 Force reprocess: {'Yes' if force else 'No'}")
-    click.echo(f"🧪 Dry run: {'Yes' if dry_run else 'No'}")
-    if parallel:
-        click.echo(f"⚡ Parallel processing: Yes ({workers} workers)")
-    else:
-        click.echo(f"⚡ Parallel processing: No (sequential)")
-    click.echo()
-    
-    try:
-        # Get backend
-        backend_name = ctx.obj.get('db_backend')
-        backend = get_backend(backend_name)
-        
-        if not backend.is_connected():
-            click.echo("❌ Database not connected", err=True)
-            return
-        
-        # Create services
-        git_service = GitService()
-        ingest_service = DocumentIngestService(backend, git_service)
-        bulk_service = BulkIngestService(backend, git_service, ingest_service)
-        
-        # Start bulk ingestion
-        start_time = time.time()
-        mode = "parallel" if parallel else "sequential"
-        click.echo(f"🚀 Starting bulk ingestion ({mode} mode)...")
-        click.echo()
-        
-        progress = bulk_service.ingest_bulk(
-            directory=dir_path,
-            pattern=pattern,
-            recursive=recursive,
-            force=force,
-            dry_run=dry_run,
-            parallel=parallel,
-            max_workers=workers
-        )
-        
-        elapsed_time = time.time() - start_time
-        
-        # Display summary
-        click.echo()
-        click.echo("=" * 60)
-        click.echo("📊 Bulk Ingestion Summary")
-        click.echo("=" * 60)
-        click.echo(f"Total files discovered: {progress.total_files}")
-        click.echo(f"Files processed: {progress.processed}")
-        click.echo(f"✅ Succeeded: {progress.succeeded}")
-        click.echo(f"⏭️  Skipped: {progress.skipped}")
-        click.echo(f"❌ Failed: {progress.failed}")
-        click.echo(f"⏱️  Total time: {elapsed_time:.2f}s")
-        click.echo(f"📈 Progress: {progress.progress_percent:.1f}%")
-        
-        if progress.errors:
-            click.echo()
-            click.echo(f"⚠️  {len(progress.errors)} errors occurred:")
-            for i, error in enumerate(progress.errors[:5], 1):  # Show first 5 errors
-                click.echo(f"  {i}. {error.get('file', 'Unknown')}")
-                if 'issues' in error:
-                    for issue in error['issues']:
-                        click.echo(f"     - {issue}")
-                elif 'error' in error:
-                    click.echo(f"     - {error['error']}")
-            
-            if len(progress.errors) > 5:
-                click.echo(f"  ... and {len(progress.errors) - 5} more errors")
-            
-            error_report = dir_path / "bulk_ingest_errors.json"
-            if error_report.exists():
-                click.echo(f"\n📄 Full error report: {error_report}")
-        
-        click.echo("=" * 60)
-        
-        if dry_run:
-            click.echo("\n✅ Dry run completed - no files were actually processed")
-        elif progress.failed > 0:
-            click.echo("\n⚠️  Bulk ingestion completed with errors")
-        else:
-            click.echo("\n✅ Bulk ingestion completed successfully!")
-        
-    except Exception as e:
-        click.echo(f"\n❌ Error during bulk ingestion: {e}", err=True)
         raise
 
 
