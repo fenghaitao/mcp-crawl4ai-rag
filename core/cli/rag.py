@@ -341,9 +341,9 @@ def egest_python_test(ctx, file_path: str, format: str):
 @click.option('--workers', '-w', type=int, default=4, help='Number of parallel workers (default: 4)')
 @click.pass_context
 @handle_cli_errors
-def ingest_docs_batch(ctx, directory: str, pattern: str, recursive: bool, 
-                      force: bool, dry_run: bool, parallel: bool, workers: int):
-    """Bulk ingest multiple documentation files from a directory.
+def ingest_docs_dir(ctx, directory: str, pattern: str, recursive: bool, 
+                    force: bool, dry_run: bool, parallel: bool, workers: int):
+    """Ingest multiple documentation files from a directory.
     
     Automatically skips files already in the database (unless --force is used).
     Uses the database as the source of truth for tracking progress.
@@ -813,6 +813,341 @@ def list_chunks(ctx, file_id: int, json_output: bool):
         
     except Exception as e:
         click.echo(f"❌ Error listing chunks: {e}", err=True)
+        raise
+
+
+@rag.command()
+@click.argument('directory', type=click.Path(exists=True, file_okay=False, dir_okay=True))
+@click.option('--pattern', '-p', default='*.md', help='File pattern to match (e.g., *.md,*.html,*.rst)')
+@click.option('--recursive/--no-recursive', default=True, help='Search subdirectories recursively')
+@click.option('--commit', help='Remove only this specific commit version for all files (default: remove all versions)')
+@click.option('--dry-run', is_flag=True, help='Show what would be removed without actually removing')
+@click.option('--confirm', '-c', is_flag=True, help='Skip confirmation prompt')
+@click.option('--parallel', is_flag=True, help='Enable parallel processing (faster but uses more resources)')
+@click.option('--workers', '-w', type=int, default=4, help='Number of parallel workers (default: 4)')
+@click.pass_context
+@handle_cli_errors
+def egest_docs_dir(ctx, directory: str, pattern: str, recursive: bool, commit: Optional[str], 
+                   dry_run: bool, confirm: bool, parallel: bool, workers: int):
+    """Remove multiple documentation files and their chunks from the database.
+    
+    Discovers files matching the pattern in the directory and removes them from the database.
+    By default, removes ALL versions of each file. Use --commit to remove only a specific version.
+    
+    Processing modes:
+    - Sequential (default): Process files one at a time
+    - Parallel (--parallel): Process multiple files concurrently for faster removal
+    """
+    from ..backends.factory import get_backend
+    from ..services.git_service import GitService
+    from ..services.bulk_ingest_service import BulkIngestService
+    from pathlib import Path
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import time
+    import threading
+    
+    verbose_echo(ctx, "Starting bulk documentation removal...")
+    
+    dir_path = Path(directory)
+    click.echo(f"📁 Directory: {dir_path}")
+    click.echo(f"🔍 Pattern: {pattern}")
+    click.echo(f"📂 Recursive: {'Yes' if recursive else 'No'}")
+    if commit:
+        click.echo(f"🔖 Commit filter: {commit}")
+    else:
+        click.echo(f"🔖 Remove all versions: Yes")
+    click.echo(f"🧪 Dry run: {'Yes' if dry_run else 'No'}")
+    if parallel:
+        click.echo(f"⚡ Parallel processing: Yes ({workers} workers)")
+    else:
+        click.echo(f"⚡ Parallel processing: No (sequential)")
+    click.echo()
+    
+    try:
+        # Get backend
+        backend_name = ctx.obj.get('db_backend')
+        backend = get_backend(backend_name)
+        
+        if not backend.is_connected():
+            click.echo("❌ Database not connected", err=True)
+            return
+        
+        # Create services
+        git_service = GitService()
+        bulk_service = BulkIngestService(backend, git_service, None)  # Don't need ingest service for removal
+        
+        # Discover files matching pattern
+        click.echo("🔍 Discovering files...")
+        files = bulk_service.discover_files(dir_path, pattern, recursive)
+        
+        if not files:
+            click.echo("📭 No files found matching the pattern.")
+            return
+        
+        click.echo(f"📊 Found {len(files)} files to process")
+        
+        # Get git repository info for path normalization
+        git_info = git_service.detect_repository(dir_path)
+        
+        # Track removal statistics
+        removal_stats = {
+            'total_files': len(files),
+            'processed': 0,
+            'succeeded': 0,
+            'failed': 0,
+            'not_found': 0,
+            'total_chunks': 0,
+            'total_words': 0,
+            'errors': []
+        }
+        
+        # Thread lock for stats updates
+        stats_lock = threading.Lock()
+        
+        def process_single_file(file_path: Path) -> dict:
+            """Process a single file for removal."""
+            # Calculate normalized path
+            if git_info:
+                normalized_path = git_info.get_relative_path(file_path.resolve())
+                repo = backend.get_repository(git_info.repo_url)
+                repo_id = repo['id'] if repo else None
+            else:
+                normalized_path = str(file_path)
+                repo_id = None
+            
+            # Get file versions
+            all_versions = []
+            if repo_id:
+                all_versions = backend.get_file_history(repo_id, normalized_path, limit=1000)
+            
+            if not all_versions:
+                # Fallback: check if current version exists
+                try:
+                    from .utils import calculate_file_hash
+                    if file_path.exists():
+                        file_hash = calculate_file_hash(str(file_path))
+                        existing = backend.check_file_exists(normalized_path, file_hash)
+                        if existing:
+                            all_versions = [existing]
+                except Exception:
+                    pass
+            
+            if not all_versions:
+                return {
+                    'status': 'not_found',
+                    'file_path': str(file_path),
+                    'normalized_path': normalized_path,
+                    'chunks': 0,
+                    'words': 0
+                }
+            
+            # Filter by commit if specified
+            versions_to_remove = all_versions
+            if commit:
+                versions_to_remove = [v for v in all_versions if v.get('commit_sha', '').startswith(commit)]
+                if not versions_to_remove:
+                    return {
+                        'status': 'commit_not_found',
+                        'file_path': str(file_path),
+                        'normalized_path': normalized_path,
+                        'commit': commit,
+                        'available_commits': [v.get('commit_sha', 'Unknown')[:8] for v in all_versions[:5]],
+                        'chunks': 0,
+                        'words': 0
+                    }
+            
+            # Calculate totals
+            total_chunks = sum(v.get('chunk_count', 0) for v in versions_to_remove)
+            total_words = sum(v.get('word_count', 0) for v in versions_to_remove)
+            
+            if dry_run:
+                return {
+                    'status': 'would_remove',
+                    'file_path': str(file_path),
+                    'normalized_path': normalized_path,
+                    'versions': len(versions_to_remove),
+                    'chunks': total_chunks,
+                    'words': total_words
+                }
+            
+            # Actually remove the file(s)
+            try:
+                if commit:
+                    success = backend.remove_file_version(normalized_path, commit)
+                else:
+                    success = backend.remove_file_data(normalized_path)
+                
+                if success:
+                    return {
+                        'status': 'removed',
+                        'file_path': str(file_path),
+                        'normalized_path': normalized_path,
+                        'versions': len(versions_to_remove),
+                        'chunks': total_chunks,
+                        'words': total_words
+                    }
+                else:
+                    return {
+                        'status': 'failed',
+                        'file_path': str(file_path),
+                        'normalized_path': normalized_path,
+                        'error': 'Backend removal failed',
+                        'chunks': total_chunks,
+                        'words': total_words
+                    }
+            except Exception as e:
+                return {
+                    'status': 'error',
+                    'file_path': str(file_path),
+                    'normalized_path': normalized_path,
+                    'error': str(e),
+                    'chunks': total_chunks,
+                    'words': total_words
+                }
+        
+        # Show preview and get confirmation unless --confirm or --dry-run
+        if not dry_run and not confirm:
+            click.echo("⚠️  This will permanently remove files from the database:")
+            click.echo(f"   - Directory: {dir_path}")
+            click.echo(f"   - Pattern: {pattern}")
+            click.echo(f"   - Files to process: {len(files)}")
+            if commit:
+                click.echo(f"   - Commit filter: {commit}")
+            else:
+                click.echo(f"   - All versions of each file")
+            
+            if not click.confirm("\nAre you sure you want to proceed?"):
+                click.echo("❌ Operation cancelled")
+                return
+        
+        # Process files
+        start_time = time.time()
+        mode = "parallel" if parallel else "sequential"
+        click.echo(f"🚀 Starting bulk removal ({mode} mode)...")
+        click.echo()
+        
+        if parallel:
+            # Parallel processing
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                future_to_file = {
+                    executor.submit(process_single_file, file_path): file_path
+                    for file_path in files
+                }
+                
+                for future in as_completed(future_to_file):
+                    file_path = future_to_file[future]
+                    try:
+                        result = future.result()
+                        
+                        with stats_lock:
+                            removal_stats['processed'] += 1
+                            
+                            if result['status'] == 'removed':
+                                removal_stats['succeeded'] += 1
+                                removal_stats['total_chunks'] += result['chunks']
+                                removal_stats['total_words'] += result['words']
+                            elif result['status'] in ['would_remove']:
+                                removal_stats['succeeded'] += 1  # For dry run
+                                removal_stats['total_chunks'] += result['chunks']
+                                removal_stats['total_words'] += result['words']
+                            elif result['status'] in ['not_found', 'commit_not_found']:
+                                removal_stats['not_found'] += 1
+                            else:
+                                removal_stats['failed'] += 1
+                                removal_stats['errors'].append(result)
+                            
+                            # Progress update
+                            if removal_stats['processed'] % 10 == 0:
+                                progress = removal_stats['processed'] / removal_stats['total_files'] * 100
+                                click.echo(f"Progress: {progress:.1f}% ({removal_stats['processed']}/{removal_stats['total_files']})")
+                    
+                    except Exception as e:
+                        with stats_lock:
+                            removal_stats['processed'] += 1
+                            removal_stats['failed'] += 1
+                            removal_stats['errors'].append({
+                                'status': 'exception',
+                                'file_path': str(file_path),
+                                'error': str(e)
+                            })
+        else:
+            # Sequential processing
+            for i, file_path in enumerate(files, 1):
+                try:
+                    result = process_single_file(file_path)
+                    
+                    removal_stats['processed'] += 1
+                    
+                    if result['status'] == 'removed':
+                        removal_stats['succeeded'] += 1
+                        removal_stats['total_chunks'] += result['chunks']
+                        removal_stats['total_words'] += result['words']
+                    elif result['status'] in ['would_remove']:
+                        removal_stats['succeeded'] += 1  # For dry run
+                        removal_stats['total_chunks'] += result['chunks']
+                        removal_stats['total_words'] += result['words']
+                    elif result['status'] in ['not_found', 'commit_not_found']:
+                        removal_stats['not_found'] += 1
+                    else:
+                        removal_stats['failed'] += 1
+                        removal_stats['errors'].append(result)
+                    
+                    # Progress update
+                    if i % 10 == 0:
+                        progress = i / removal_stats['total_files'] * 100
+                        click.echo(f"Progress: {progress:.1f}% ({i}/{removal_stats['total_files']})")
+                
+                except Exception as e:
+                    removal_stats['processed'] += 1
+                    removal_stats['failed'] += 1
+                    removal_stats['errors'].append({
+                        'status': 'exception',
+                        'file_path': str(file_path),
+                        'error': str(e)
+                    })
+        
+        elapsed_time = time.time() - start_time
+        
+        # Display summary
+        click.echo()
+        click.echo("=" * 60)
+        if dry_run:
+            click.echo("📊 Bulk Removal Preview (Dry Run)")
+        else:
+            click.echo("📊 Bulk Removal Summary")
+        click.echo("=" * 60)
+        click.echo(f"Total files discovered: {removal_stats['total_files']}")
+        click.echo(f"Files processed: {removal_stats['processed']}")
+        if dry_run:
+            click.echo(f"📋 Would remove: {removal_stats['succeeded']}")
+        else:
+            click.echo(f"✅ Removed: {removal_stats['succeeded']}")
+        click.echo(f"📭 Not found in DB: {removal_stats['not_found']}")
+        click.echo(f"❌ Failed: {removal_stats['failed']}")
+        click.echo(f"📦 Total chunks affected: {removal_stats['total_chunks']}")
+        click.echo(f"📝 Total words affected: {removal_stats['total_words']}")
+        click.echo(f"⏱️  Total time: {elapsed_time:.2f}s")
+        
+        if removal_stats['errors']:
+            click.echo()
+            click.echo(f"⚠️  {len(removal_stats['errors'])} errors occurred:")
+            for i, error in enumerate(removal_stats['errors'][:5], 1):  # Show first 5 errors
+                click.echo(f"  {i}. {error.get('file_path', 'Unknown')}: {error.get('error', error.get('status', 'Unknown error'))}")
+            
+            if len(removal_stats['errors']) > 5:
+                click.echo(f"  ... and {len(removal_stats['errors']) - 5} more errors")
+        
+        click.echo("=" * 60)
+        
+        if dry_run:
+            click.echo("\n✅ Dry run completed - no files were actually removed")
+        elif removal_stats['failed'] > 0:
+            click.echo("\n⚠️  Bulk removal completed with errors")
+        else:
+            click.echo("\n✅ Bulk removal completed successfully!")
+        
+    except Exception as e:
+        click.echo(f"\n❌ Error during bulk removal: {e}", err=True)
         raise
 
 

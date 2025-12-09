@@ -250,7 +250,7 @@ This implementation plan breaks down the batch processing and query system into 
 ## Phase 7: CLI Commands
 
 - [x] 25. Add batch ingest CLI command
-  - Add `ingest-docs-batch` command to `core/cli/rag.py`
+  - Add `ingest-docs-dir` command to `core/cli/rag.py`
   - Accept directory path argument
   - Add --pattern option (default: *.md)
   - Add --recursive flag

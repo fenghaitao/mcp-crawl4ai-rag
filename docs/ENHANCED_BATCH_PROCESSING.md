@@ -314,7 +314,7 @@ The enhanced features are automatically available through existing CLI commands:
 
 ```bash
 # Standard batch processing with enhancements
-python -m core.cli.main ingest-docs-batch /docs --pattern "*.md" --recursive
+python -m core.cli.main ingest-docs-dir /docs --pattern "*.md" --recursive
 
 # Monitor progress in real-time
 tail -f batch_ingest_performance.json

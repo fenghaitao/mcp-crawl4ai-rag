@@ -278,6 +278,9 @@ class ChromaBackend(DatabaseBackend):
         
         Removes ALL versions of the file matching the given path.
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         try:
             # Get all file records matching this path
             files_collection = self._client.get_collection('files')
@@ -286,27 +289,47 @@ class ChromaBackend(DatabaseBackend):
             )
             
             if file_results['ids']:
+                logger.info(f"Found {len(file_results['ids'])} file record(s) for path: {file_path}")
+                
                 # Remove chunks for all file versions
                 try:
                     chunks_collection = self._client.get_collection('content_chunks')
-                    for file_id in file_results['ids']:
-                        # Convert file_id to int for chunk query (chunks store file_id as int)
-                        file_id_int = int(file_id) if isinstance(file_id, str) and file_id.isdigit() else file_id
-                        chunk_results = chunks_collection.get(
-                            where={"file_id": file_id_int}
-                        )
-                        if chunk_results['ids']:
-                            chunks_collection.delete(ids=chunk_results['ids'])
+                    total_chunks_removed = 0
+                    
+                    for i, file_id in enumerate(file_results['ids']):
+                        # Get the actual file_id from metadata to ensure consistency
+                        file_metadata = file_results['metadatas'][i]
+                        actual_file_id = file_metadata.get('id', file_id)
+                        
+                        # Try both string and integer versions for compatibility
+                        for search_id in [actual_file_id, str(actual_file_id), int(actual_file_id) if str(actual_file_id).isdigit() else None]:
+                            if search_id is None:
+                                continue
+                                
+                            chunk_results = chunks_collection.get(
+                                where={"file_id": search_id}
+                            )
+                            if chunk_results['ids']:
+                                logger.info(f"Removing {len(chunk_results['ids'])} chunks for file_id: {search_id}")
+                                chunks_collection.delete(ids=chunk_results['ids'])
+                                total_chunks_removed += len(chunk_results['ids'])
+                                break  # Found chunks, don't try other ID formats
+                    
+                    logger.info(f"Total chunks removed: {total_chunks_removed}")
+                    
                 except Exception as e:
                     # Log but don't fail - collection might not exist or have no chunks
-                    import logging
-                    logging.getLogger(__name__).warning(f"Error removing chunks: {e}")
+                    logger.warning(f"Error removing chunks for {file_path}: {e}")
                 
                 # Remove all file records
                 files_collection.delete(ids=file_results['ids'])
+                logger.info(f"Removed {len(file_results['ids'])} file record(s)")
+            else:
+                logger.info(f"No file records found for path: {file_path}")
             
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error removing file data for {file_path}: {e}")
             return False
     
     def remove_file_version(self, file_path: str, commit_sha: str) -> bool:

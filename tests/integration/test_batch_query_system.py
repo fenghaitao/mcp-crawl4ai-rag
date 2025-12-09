@@ -371,7 +371,8 @@ class TestCLIIntegration:
         commands = list(rag.commands.keys())
         
         # Verify new commands are registered (Click converts underscores to hyphens)
-        assert 'ingest-docs-batch' in commands
+        assert 'ingest-docs-dir' in commands
+        assert 'egest-docs-dir' in commands
         assert 'query-file' in commands
         assert 'list-files' in commands
         assert 'file-history' in commands

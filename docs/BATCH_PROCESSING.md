@@ -17,22 +17,22 @@ The batch processing system allows you to:
 
 ```bash
 # Ingest all markdown files in a directory
-simics-rag rag ingest-docs-batch /path/to/docs
+simics-rag rag ingest-docs-dir /path/to/docs
 
 # Ingest with custom pattern
-simics-rag rag ingest-docs-batch /path/to/docs --pattern "*.md,*.html,*.rst"
+simics-rag rag ingest-docs-dir /path/to/docs --pattern "*.md,*.html,*.rst"
 
 # Non-recursive (current directory only)
-simics-rag rag ingest-docs-batch /path/to/docs --no-recursive
+simics-rag rag ingest-docs-dir /path/to/docs --no-recursive
 
 # Force reprocess existing files
-simics-rag rag ingest-docs-batch /path/to/docs --force
+simics-rag rag ingest-docs-dir /path/to/docs --force
 
 # Dry run (validate without processing)
-simics-rag rag ingest-docs-batch /path/to/docs --dry-run
+simics-rag rag ingest-docs-dir /path/to/docs --dry-run
 
 # Resume from previous progress
-simics-rag rag ingest-docs-batch /path/to/docs --continue
+simics-rag rag ingest-docs-dir /path/to/docs --continue
 ```
 
 ## Features
@@ -80,7 +80,7 @@ When processing files in a git repository, the system automatically:
 
 ```bash
 # Ingest all markdown files recursively
-simics-rag rag ingest-docs-batch ./documentation --pattern "*.md"
+simics-rag rag ingest-docs-dir ./documentation --pattern "*.md"
 ```
 
 Output:
@@ -121,7 +121,7 @@ Files processed: 25
 
 ```bash
 # Validate files without processing
-simics-rag rag ingest-docs-batch ./docs --dry-run
+simics-rag rag ingest-docs-dir ./docs --dry-run
 ```
 
 This validates all files and reports issues without actually ingesting them.
@@ -130,10 +130,10 @@ This validates all files and reports issues without actually ingesting them.
 
 ```bash
 # Start batch ingestion
-simics-rag rag ingest-docs-batch ./large-docs
+simics-rag rag ingest-docs-dir ./large-docs
 
 # If interrupted (Ctrl+C), resume with:
-simics-rag rag ingest-docs-batch ./large-docs --continue
+simics-rag rag ingest-docs-dir ./large-docs --continue
 ```
 
 The system will skip already-processed files and continue from where it left off.
@@ -142,7 +142,7 @@ The system will skip already-processed files and continue from where it left off
 
 ```bash
 # Ingest multiple documentation formats
-simics-rag rag ingest-docs-batch ./docs --pattern "*.md,*.html,*.rst"
+simics-rag rag ingest-docs-dir ./docs --pattern "*.md,*.html,*.rst"
 ```
 
 ## Error Report Format
