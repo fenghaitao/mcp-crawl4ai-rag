@@ -43,16 +43,87 @@ class SimpleMetadata:
 class SourceIngestService:
     """Service for ingesting source code files (DML, Python) into the RAG system."""
     
-    def __init__(self, backend, git_service=None):
+    def __init__(self, backend, source_type: str, git_service=None, test_filter: Optional[str] = None):
         """
-        Initialize with database backend and optional git service.
+        Initialize with database backend, source type, and optional git service.
         
         Args:
             backend: Database backend instance
+            source_type: Type of source files ('dml', 'python', 'cpp')
             git_service: Optional GitService for version tracking
+            test_filter: Test file filtering ('test-only', 'skip-test', or None)
         """
         self.backend = backend
+        self.source_type = source_type.lower()
         self.git_service = git_service
+        self.test_filter = test_filter
+    
+    def should_skip_file(self, file_path: str) -> bool:
+        """
+        Check if a file should be skipped during ingestion.
+        
+        Currently skips:
+        - DML 1.2 files (older syntax not supported)
+        - Python files based on test_filter setting:
+          * test-only: Skip files NOT in test/tests folder or NOT starting with s-/test_
+          * skip-test: Skip files IN test/tests folder or starting with s-/test_
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            True if file should be skipped, False otherwise
+        """
+        path = Path(file_path)
+        
+        # Check if it's a DML file based on source_type
+        if self.source_type == 'dml':
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                return self.is_dml_1_2(content)
+            except Exception as e:
+                logging.warning(f"Error reading file {file_path}: {e}")
+                return False
+        
+        # Check Python test filtering
+        if self.source_type == 'python' and self.test_filter:
+            is_test_file = self._is_test_file(path)
+            
+            if self.test_filter == 'test-only':
+                # Skip non-test files
+                return not is_test_file
+            elif self.test_filter == 'skip-test':
+                # Skip test files
+                return is_test_file
+        
+        return False
+    
+    def _is_test_file(self, path: Path) -> bool:
+        """
+        Determine if a Python file is a test file.
+        
+        A file is considered a test file if:
+        - It's in a directory named 'test' or 'tests'
+        - Its filename starts with 's-' or 'test_'
+        
+        Args:
+            path: Path object for the file
+            
+        Returns:
+            True if it's a test file, False otherwise
+        """
+        # Check if in test/tests directory
+        parts = path.parts
+        if any(part.lower() in ('test', 'tests') for part in parts):
+            return True
+        
+        # Check if filename starts with s- or test_
+        filename = path.name
+        if filename.startswith('s-') or filename.startswith('test_'):
+            return True
+        
+        return False
     
     def is_dml_1_2(self, content: str) -> bool:
         r"""
@@ -390,7 +461,7 @@ class SourceIngestService:
             'modified_time': file_stat.st_mtime
         }
     
-    def ingest_source_file(self, file_path: str, source_type: str = None, force_reprocess: bool = False) -> Dict[str, Any]:
+    def ingest_source_file(self, file_path: str, force_reprocess: bool = False) -> Dict[str, Any]:
         """
         Ingest source file(s) into the RAG system.
         
@@ -407,9 +478,6 @@ class SourceIngestService:
         
         Args:
             file_path: Path to source file or directory
-            source_type: Type of source files to ingest ('dml', 'python', 'cpp'). 
-                        If None, auto-detect from file extension.
-                        Required when file_path is a directory.
             force_reprocess: If True, remove existing data and re-ingest
             
         Returns:
@@ -426,29 +494,22 @@ class SourceIngestService:
         
         # Handle directory
         if path.is_dir():
-            return self._ingest_directory(str(path), source_type, force_reprocess)
+            return self._ingest_directory(str(path), force_reprocess)
         
         # Handle single file
         return self._ingest_single_file(str(path), force_reprocess)
     
-    def _ingest_directory(self, dir_path: str, source_type: str, force_reprocess: bool = False) -> Dict[str, Any]:
+    def _ingest_directory(self, dir_path: str, force_reprocess: bool = False) -> Dict[str, Any]:
         """
         Ingest all source files from a directory.
         
         Args:
             dir_path: Directory path
-            source_type: Type of source files ('dml', 'python', 'cpp')
             force_reprocess: If True, remove existing data and re-ingest
             
         Returns:
             Dictionary with aggregated results
         """
-        if not source_type:
-            return {
-                'success': False,
-                'error': 'source_type is required when file_path is a directory'
-            }
-        
         # Determine file extension pattern
         extension_map = {
             'dml': '*.dml',
@@ -456,11 +517,11 @@ class SourceIngestService:
             'cpp': '*.cc'
         }
         
-        pattern = extension_map.get(source_type.lower())
+        pattern = extension_map.get(self.source_type)
         if not pattern:
             return {
                 'success': False,
-                'error': f'Unsupported source_type: {source_type}. Use "dml", "python", or "cpp"'
+                'error': f'Unsupported source_type: {self.source_type}. Use "dml", "python", or "cpp"'
             }
         
         # Find all matching files
@@ -473,7 +534,7 @@ class SourceIngestService:
                 'error': f'No {pattern} files found in {dir_path}'
             }
         
-        logging.info(f"📁 Found {len(files)} {source_type.upper()} files in {dir_path}")
+        logging.info(f"📁 Found {len(files)} {self.source_type.upper()} files in {dir_path}")
         
         # Process each file
         results = {
@@ -557,6 +618,12 @@ class SourceIngestService:
             Dictionary with ingestion results
         """
         start_time = datetime.now()
+        if self.should_skip_file(file_path):
+            return {
+                'success': False,
+                'skipped': True,
+                'reason': 'File matches skip patterns'
+            }
         
         try:
             # Validate file exists
@@ -718,6 +785,7 @@ class SourceIngestService:
                     'chunk_index': i,
                     'source_id': source_id,
                     'source_type': source_type,
+                    'content_type': f'code_{source_type}',  # Set content_type for ChromaDB
                     'chunking_method': 'ast_aware',
                     'has_summarization': use_summarization,
                     'char_count': len(chunk_content),
@@ -772,6 +840,7 @@ class SourceIngestService:
             # Store chunks (embeddings already generated)
             logging.info(f"   💾 Step 6: Storing chunks in database...")
             result = self.backend.store_chunks(file_id, chunks_to_store, file_path)
+            logging.info(f"      ✓ Stored chunks successfully: {result.get('chunks_stored', 0)} chunks")
             
             processing_time = (datetime.now() - start_time).total_seconds()
             

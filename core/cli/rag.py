@@ -169,10 +169,10 @@ def ingest_dml(ctx, file_path: str, force: bool):
         
         # Create git service and source ingest service
         git_service = GitService()
-        service = SourceIngestService(backend, git_service)
+        service = SourceIngestService(backend, source_type="dml", git_service=git_service)
         
         # Process the DML file(s)
-        result = service.ingest_source_file(file_path, source_type="dml", force_reprocess=force)
+        result = service.ingest_source_file(file_path, force_reprocess=force)
         
         # Display results
         if result['success']:
@@ -223,27 +223,47 @@ def ingest_dml(ctx, file_path: str, force: bool):
 @rag.command()
 @click.argument('file_path', type=click.Path(exists=True))
 @click.option('-f', '--force', is_flag=True, help='Force re-processing (remove existing data and re-ingest)')
+@click.option('--test-only', is_flag=True, help='Only process test files (in test/tests folder or starting with s-/test_)')
+@click.option('--skip-test', is_flag=True, help='Skip test files (in test/tests folder or starting with s-/test_)')
 @click.pass_context
 @handle_cli_errors
-def ingest_python_test(ctx, file_path: str, force: bool):
-    """Ingest Python test file(s) into the RAG system.
+def ingest_python(ctx, file_path: str, force: bool, test_only: bool, skip_test: bool):
+    """Ingest Python file(s) into the RAG system.
     
     FILE_PATH can be either:
     - A single .py file
     - A directory (will recursively process all .py files)
+    
+    Use --test-only to process only test files.
+    Use --skip-test to skip test files and process only non-test files.
     """
     from ..backends.factory import get_backend
     from ..services.source_ingest_service import SourceIngestService
     from ..services.git_service import GitService
     from pathlib import Path
     
-    verbose_echo(ctx, "Ingesting Python test file(s)...")
+    verbose_echo(ctx, "Ingesting Python file(s)...")
+    
+    # Validate mutually exclusive options
+    if test_only and skip_test:
+        click.echo("❌ Error: --test-only and --skip-test are mutually exclusive", err=True)
+        raise click.UsageError("Cannot use both --test-only and --skip-test together")
     
     path = Path(file_path)
     is_directory = path.is_dir()
     
-    click.echo(f"{'📁' if is_directory else '📄'} {'Directory' if is_directory else 'Python test file'}: {file_path}")
+    # Determine test filter
+    test_filter = None
+    if test_only:
+        test_filter = 'test-only'
+    elif skip_test:
+        test_filter = 'skip-test'
+    
+    click.echo(f"{'📁' if is_directory else '📄'} {'Directory' if is_directory else 'Python file'}: {file_path}")
     click.echo(f"🔄 Force re-processing: {'Yes' if force else 'No'}")
+    if test_filter:
+        filter_desc = 'Test files only' if test_only else 'Skip test files'
+        click.echo(f"🧪 Test filter: {filter_desc}")
     
     try:
         # Get backend
@@ -256,10 +276,10 @@ def ingest_python_test(ctx, file_path: str, force: bool):
         
         # Create git service and source ingest service
         git_service = GitService()
-        service = SourceIngestService(backend, git_service)
+        service = SourceIngestService(backend, source_type="python", git_service=git_service, test_filter=test_filter)
         
         # Process the Python test file(s)
-        result = service.ingest_source_file(file_path, source_type="python", force_reprocess=force)
+        result = service.ingest_source_file(file_path, force_reprocess=force)
         
         # Display results
         if result['success']:
@@ -290,7 +310,7 @@ def ingest_python_test(ctx, file_path: str, force: bool):
                     click.echo(f"  - Reason: {result.get('reason', 'File unchanged')}")
                     click.echo(f"  - Check time: {result['processing_time']:.2f}s")
                 else:
-                    click.echo("✅ Python test file ingestion completed successfully!")
+                    click.echo("✅ Python file ingestion completed successfully!")
                     click.echo(f"📊 Results:")
                     click.echo(f"  - File ID: {result['file_id']}")
                     click.echo(f"  - Chunks created: {result['chunks_created']}")
@@ -303,7 +323,7 @@ def ingest_python_test(ctx, file_path: str, force: bool):
             raise Exception(result['error'])
         
     except Exception as e:
-        click.echo(f"❌ Error during Python test ingestion: {e}", err=True)
+        click.echo(f"❌ Error during Python ingestion: {e}", err=True)
         raise
         
         # Display results

@@ -424,18 +424,26 @@ class ChromaBackend(DatabaseBackend):
             
             # Prepare metadata
             word_count = chunk.metadata.char_count // 5  # Rough word count estimate
+            
+            # Get content_type from metadata or default to 'documentation'
+            content_type = getattr(chunk.metadata, 'content_type', None) or chunk.metadata._data.get('content_type', 'documentation')
+            
+            # Get source_id if available (for source code files)
+            source_id = getattr(chunk.metadata, 'source_id', None) or chunk.metadata._data.get('source_id', '')
+            
             metadata = {
                 'file_id': file_id,
                 'url': file_path,
                 'chunk_number': i,
-                'content_type': 'documentation',
+                'content_type': content_type,
                 'summary': chunk.summary if chunk.summary else '',
                 'title': chunk.metadata.heading_hierarchy[-1] if chunk.metadata.heading_hierarchy else '',
                 'section': ' > '.join(chunk.metadata.heading_hierarchy),
                 'word_count': word_count,
                 'has_code': chunk.metadata.contains_code,
                 'heading_hierarchy': ' > '.join(chunk.metadata.heading_hierarchy),  # Convert list to string
-                'language_hints': ', '.join(chunk.metadata.code_languages) if chunk.metadata.code_languages else ''  # Convert list to string
+                'language_hints': ', '.join(chunk.metadata.code_languages) if chunk.metadata.code_languages else '',  # Convert list to string
+                'source_id': source_id  # Add source_id for filtering
             }
             chunk_metadatas.append(metadata)
             
@@ -467,7 +475,7 @@ class ChromaBackend(DatabaseBackend):
                     metadatas=chunk_metadatas
                 )
         
-        return {'chunks': total_chunks, 'words': total_words}
+        return {'chunks_stored': total_chunks, 'words': total_words}
     
     def update_file_statistics(self, file_id: str, chunk_count: int, word_count: int) -> bool:
         """Update file record with processing statistics."""
