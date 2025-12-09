@@ -58,22 +58,22 @@ class DocumentStructure:
     raw_content: str = ""
 
     def get_section(self, heading: Heading) -> 'Section':
-        """Get all content under a heading until next same-level heading."""
+        """Get all content under a heading until next heading (non-overlapping)."""
         # Find the start line of this heading
         start_line = heading.line_number
         
-        # Find the end line (next heading at same or higher level)
+        # Find the end line (next heading at ANY level to avoid overlap)
         end_line = float('inf')
         for h in self.headings:
-            if h.line_number > heading.line_number and h.level <= heading.level:
+            if h.line_number > heading.line_number:
                 end_line = h.line_number
                 break
         
-        # Collect content within this range
+        # Collect content within this range (excluding child heading lines)
         section_paragraphs = [p for p in self.paragraphs 
-                             if start_line <= p.line_start < end_line]
+                             if start_line < p.line_start < end_line]
         section_code_blocks = [cb for cb in self.code_blocks 
-                              if start_line <= cb.line_start < end_line]
+                              if start_line < cb.line_start < end_line]
         
         return Section(
             heading=heading,
@@ -150,5 +150,5 @@ class ProcessedChunk:
             "content": self.content,
             "metadata": self.metadata.to_dict(),
             "summary": self.summary,
-            "embedding": self.embedding.tolist() if self.embedding is not None else None
+            #"embedding": self.embedding.tolist() if self.embedding is not None else None
         }

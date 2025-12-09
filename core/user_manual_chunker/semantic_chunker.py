@@ -166,12 +166,24 @@ class SemanticChunker(SemanticChunkerInterface):
                     logger.info("Skipping empty chunk")
                     continue
                 
+                # Calculate chunk size
+                chunk_size = self.calculate_size(content)
+                
+                # Validate chunk size
+                if chunk_size > self.max_chunk_size:
+                    logger.error(
+                        f"Chunk {chunk_index} exceeds max_chunk_size: "
+                        f"{chunk_size} > {self.max_chunk_size} "
+                        f"(section: {section.heading.text if section.heading else 'unknown'})"
+                    )
+                
                 chunk = DocumentChunk(
                     content=content,
                     section=section,
                     chunk_index=chunk_index,
                     line_start=section.heading.line_number if section.heading else 0,
-                    line_end=self._get_section_end_line(section)
+                    line_end=self._get_section_end_line(section),
+                    chunk_size=chunk_size
                 )
                 chunks.append(chunk)
                 chunk_index += 1
@@ -185,6 +197,21 @@ class SemanticChunker(SemanticChunkerInterface):
                 chunks = self._apply_overlap(chunks)
             except Exception as e:
                 logger.warning(f"Error applying overlap: {e}")
+        
+        # Log chunk size statistics
+        if chunks:
+            chunk_sizes = [chunk.chunk_size for chunk in chunks]
+            logger.info(
+                f"Created {len(chunks)} chunks: "
+                f"min={min(chunk_sizes)}, "
+                f"max={max(chunk_sizes)}, "
+                f"avg={sum(chunk_sizes)//len(chunk_sizes)}, "
+                f"limit={self.max_chunk_size}"
+            )
+            
+            oversized_count = sum(1 for size in chunk_sizes if size > self.max_chunk_size)
+            if oversized_count > 0:
+                logger.warning(f"{oversized_count} chunks exceed max_chunk_size")
         
         return chunks
     
@@ -206,14 +233,14 @@ class SemanticChunker(SemanticChunkerInterface):
         """
         Split large section at paragraph boundaries.
         
-        Handles oversized code blocks by creating dedicated chunks with warnings.
+        Handles oversized code blocks and paragraphs by creating dedicated chunks with warnings.
         
         Strategy:
-        - Never split code blocks
+        - Never split code blocks or paragraphs internally
         - Keep code blocks with preceding explanatory text
-        - Split at paragraph boundaries
+        - Split at content boundaries
         - Include section heading in each split
-        - Handle oversized code blocks specially
+        - Handle oversized content specially
         
         Args:
             section: Section to split
@@ -224,11 +251,13 @@ class SemanticChunker(SemanticChunkerInterface):
         split_sections = []
         current_paragraphs = []
         current_code_blocks = []
-        current_size = 0
         
         # Get heading size (will be included in each split)
         heading_text = f"{'#' * section.heading.level} {section.heading.text}\n"
         heading_size = self.calculate_size(heading_text)
+        
+        # Initialize with heading size since it's added to every split
+        current_size = heading_size
         
         # Interleave paragraphs and code blocks by line number
         content_items = []
@@ -258,7 +287,7 @@ class SemanticChunker(SemanticChunkerInterface):
                         ))
                         current_paragraphs = []
                         current_code_blocks = []
-                        current_size = 0
+                        current_size = heading_size  # Reset to heading size
                     
                     # Create a dedicated chunk for this oversized code block
                     split_sections.append(self._create_split_section(
@@ -267,14 +296,16 @@ class SemanticChunker(SemanticChunkerInterface):
                     continue
                 
                 # Check if adding this code block would exceed limit
-                if current_size + heading_size + code_size > self.max_chunk_size and current_paragraphs:
+                if current_size + code_size > self.max_chunk_size and (current_paragraphs or current_code_blocks):
+                    logger.warning(f"Adding this code block exceeds max_chunk_size, "
+                                   f"{current_size+code_size} > {self.max_chunk_size}. Creating new chunk.")
                     # Create a chunk with what we have so far
                     split_sections.append(self._create_split_section(
                         section.heading, current_paragraphs, current_code_blocks
                     ))
                     current_paragraphs = []
                     current_code_blocks = []
-                    current_size = 0
+                    current_size = heading_size  # Reset to heading size
                 
                 # Add code block to current chunk
                 current_code_blocks.append(content)
@@ -283,15 +314,39 @@ class SemanticChunker(SemanticChunkerInterface):
             else:  # paragraph
                 para_size = self.calculate_size(content.content)
                 
+                # Handle oversized paragraphs
+                if para_size > self.max_chunk_size:
+                    logger.warning(
+                        f"Paragraph at line {content.line_start} exceeds max_chunk_size "
+                        f"({para_size} > {self.max_chunk_size}). Creating dedicated chunk."
+                    )
+                    
+                    # Save current accumulated content if any
+                    if current_paragraphs or current_code_blocks:
+                        split_sections.append(self._create_split_section(
+                            section.heading, current_paragraphs, current_code_blocks
+                        ))
+                        current_paragraphs = []
+                        current_code_blocks = []
+                        current_size = heading_size  # Reset to heading size
+                    
+                    # Create a dedicated chunk for this oversized paragraph
+                    split_sections.append(self._create_split_section(
+                        section.heading, [content], []
+                    ))
+                    continue
+                
                 # Check if adding this paragraph would exceed limit
-                if current_size + heading_size + para_size > self.max_chunk_size and current_paragraphs:
+                if current_size + para_size > self.max_chunk_size and (current_paragraphs or current_code_blocks):
                     # Create a chunk with what we have so far
+                    logger.warning(f"Adding this paragraph exceeds max_chunk_size, "
+                                   f"{current_size+para_size} > {self.max_chunk_size}. Creating new chunk.")
                     split_sections.append(self._create_split_section(
                         section.heading, current_paragraphs, current_code_blocks
                     ))
                     current_paragraphs = []
                     current_code_blocks = []
-                    current_size = 0
+                    current_size = heading_size  # Reset to heading size
                 
                 # Add paragraph to current chunk
                 current_paragraphs.append(content)
@@ -302,7 +357,7 @@ class SemanticChunker(SemanticChunkerInterface):
             split_sections.append(self._create_split_section(
                 section.heading, current_paragraphs, current_code_blocks
             ))
-        
+
         return split_sections if split_sections else [section]
 
     
@@ -450,12 +505,16 @@ class SemanticChunker(SemanticChunkerInterface):
             [p.line_end for p in paragraphs] + [cb.line_end for cb in code_blocks]
         )
         
+        content = section.get_text_content()
+        chunk_size = self.calculate_size(content)
+        
         return DocumentChunk(
-            content=section.get_text_content(),
+            content=content,
             section=section,
             chunk_index=chunk_index,
             line_start=line_start,
-            line_end=line_end
+            line_end=line_end,
+            chunk_size=chunk_size
         )
     
     def _merge_small_sections(self, sections: List[Section]) -> List[Section]:
@@ -547,12 +606,16 @@ class SemanticChunker(SemanticChunkerInterface):
             # Prepend overlap to current chunk
             new_content = overlap_text + "\n\n" + current_chunk.content if overlap_text else current_chunk.content
             
+            # Recalculate chunk size with overlap
+            new_chunk_size = self.calculate_size(new_content)
+            
             overlapped_chunk = DocumentChunk(
                 content=new_content,
                 section=current_chunk.section,
                 chunk_index=current_chunk.chunk_index,
                 line_start=current_chunk.line_start,
-                line_end=current_chunk.line_end
+                line_end=current_chunk.line_end,
+                chunk_size=new_chunk_size
             )
             overlapped_chunks.append(overlapped_chunk)
         

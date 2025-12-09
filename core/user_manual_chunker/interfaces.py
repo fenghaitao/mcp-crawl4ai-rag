@@ -159,3 +159,4 @@ class DocumentChunk:
     chunk_index: int
     line_start: int
     line_end: int
+    chunk_size: int = 0  # Size in characters or tokens, calculated by SemanticChunker.calculate_size()

@@ -32,7 +32,6 @@ from .data_models import ProcessedChunk
 # Set up logging
 logger = logging.getLogger(__name__)
 
-
 class RateLimiter:
     """
     Token bucket rate limiter for API calls.

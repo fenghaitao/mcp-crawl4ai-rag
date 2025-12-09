@@ -103,12 +103,9 @@ class SummaryGenerator:
             if not summary or not summary.strip():
                 logger.warning("LLM returned empty summary, using fallback")
                 return self._fallback_summary(chunk, metadata)
-            
             # Enforce length constraint
             summary = self._enforce_length_limit(summary)
-            
             return summary
-            
         except TimeoutError as e:
             logger.warning(f"LLM summary generation timed out: {e}")
             return self._fallback_summary(chunk, metadata)

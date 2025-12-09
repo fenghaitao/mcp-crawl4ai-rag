@@ -71,24 +71,26 @@ class MarkdownParser(DocumentParser):
                 raw_content=content
             )
         
-        try:
-            headings = self.extract_headings(content)
-        except Exception as e:
-            logger.warning(f"Error extracting headings from {source_path}: {e}")
-            headings = []
-        
+        # Extract code blocks FIRST to exclude them from heading extraction
         try:
             code_blocks = self.extract_code_blocks(content)
         except Exception as e:
             logger.warning(f"Error extracting code blocks from {source_path}: {e}")
             code_blocks = []
         
+        # Extract headings, excluding lines inside code blocks
+        try:
+            headings = self.extract_headings(content, code_blocks)
+        except Exception as e:
+            logger.warning(f"Error extracting headings from {source_path}: {e}")
+            headings = []
+        
         try:
             paragraphs = self._extract_paragraphs(content, headings, code_blocks)
         except Exception as e:
             logger.warning(f"Error extracting paragraphs from {source_path}: {e}")
             paragraphs = []
-        
+
         return DocumentStructure(
             source_path=source_path,
             headings=headings,
@@ -125,19 +127,28 @@ class MarkdownParser(DocumentParser):
         except Exception as e:
             raise ValueError(f"Failed to decode content: {e}")
     
-    def extract_headings(self, content: str) -> List[Heading]:
+    def extract_headings(self, content: str, code_blocks: List[CodeBlock] = None) -> List[Heading]:
         """
         Extract heading hierarchy from markdown document.
         
         Handles malformed headings gracefully.
+        Excludes headings that appear inside code blocks.
         
         Args:
             content: Raw markdown content
+            code_blocks: List of code blocks to exclude from heading extraction
             
         Returns:
             List of Heading objects with parent relationships
         """
         headings = []
+        
+        # Build set of line numbers that are inside code blocks
+        code_block_lines = set()
+        if code_blocks:
+            for cb in code_blocks:
+                for line_num in range(cb.line_start, cb.line_end + 1):
+                    code_block_lines.add(line_num)
         
         try:
             lines = content.split('\n')
@@ -146,6 +157,10 @@ class MarkdownParser(DocumentParser):
             return headings
         
         for line_num, line in enumerate(lines, start=1):
+            # Skip lines inside code blocks
+            if line_num in code_block_lines:
+                continue
+            
             try:
                 match = self.HEADING_PATTERN.match(line)
                 if match:
@@ -172,13 +187,11 @@ class MarkdownParser(DocumentParser):
             except Exception as e:
                 logger.warning(f"Error parsing heading at line {line_num}: {e}")
                 continue
-        
         # Build parent relationships
         try:
             self._build_heading_hierarchy(headings)
         except Exception as e:
             logger.warning(f"Error building heading hierarchy: {e}")
-        
         return headings
     
     def _build_heading_hierarchy(self, headings: List[Heading]) -> None:
@@ -243,6 +256,22 @@ class MarkdownParser(DocumentParser):
                 try:
                     language = match.group(1) or "text"
                     code_content = match.group(2)
+                    
+                    # If no language specified in fence, check first line for version string
+                    if not language or language == "text":
+                        # Check first non-empty line for language identifier like "dml 1.4"
+                        first_line = None
+                        for line in code_content.split('\n'):
+                            if line.strip():
+                                first_line = line.strip()
+                                break
+                        
+                        if first_line:
+                            # Check if first line matches pattern like "dml 1.4", "dml 1.2", etc.
+                            dml_version_match = re.match(r'^\s*(dml)\s+\d+\.\d+', first_line, re.IGNORECASE)
+                            if dml_version_match:
+                                language = dml_version_match.group(1).lower()
+                                logger.info(f"Detected language '{language}' from first line: {first_line}")
                     
                     # Find line numbers
                     start_pos = match.start()
@@ -431,26 +460,15 @@ class MarkdownParser(DocumentParser):
                         ))
                     current_para = []
                     para_start_line = None
+                continue  # Skip this line completely
+            
+            if not line.strip():
                 continue
             
-            # Check if line is empty
-            if not line.strip():
-                # Empty line ends current paragraph
-                if current_para:
-                    para_text = '\n'.join(current_para).strip()
-                    if para_text:
-                        paragraphs.append(Paragraph(
-                            content=para_text,
-                            line_start=para_start_line,
-                            line_end=line_num - 1
-                        ))
-                    current_para = []
-                    para_start_line = None
-            else:
-                # Non-empty line, add to current paragraph
-                if para_start_line is None:
-                    para_start_line = line_num
-                current_para.append(line)
+            # Add line to current paragraph (including empty lines)
+            if para_start_line is None:
+                para_start_line = line_num
+            current_para.append(line)
         
         # Handle any remaining paragraph at end of file
         if current_para:
@@ -461,5 +479,5 @@ class MarkdownParser(DocumentParser):
                     line_start=para_start_line,
                     line_end=len(lines)
                 ))
-        
+
         return paragraphs
