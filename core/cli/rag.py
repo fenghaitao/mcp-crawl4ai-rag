@@ -149,6 +149,7 @@ def ingest_dml(ctx, file_path: str, force: bool):
     from ..services.source_ingest_service import SourceIngestService
     from ..services.git_service import GitService
     from pathlib import Path
+    from datetime import datetime
     
     verbose_echo(ctx, "Ingesting DML source file(s)...")
     
@@ -171,49 +172,103 @@ def ingest_dml(ctx, file_path: str, force: bool):
         git_service = GitService()
         service = SourceIngestService(backend, source_type="dml", git_service=git_service)
         
-        # Process the DML file(s)
-        result = service.ingest_source_file(file_path, force_reprocess=force)
+        # Handle directory vs single file
+        if is_directory:
+            # Find all DML files in directory
+            files = list(path.rglob('*.dml'))
+            
+            if not files:
+                click.echo(f"❌ No .dml files found in {file_path}", err=True)
+                return
+        else:
+            files = [path]
+            
+        click.echo(f"📁 Found {len(files)} DML files")
+        click.echo()
+        
+        # Process each file
+        results = {
+            'success': True,
+            'total_files': len(files),
+            'processed': 0,
+            'succeeded': 0,
+            'skipped': 0,
+            'failed': 0,
+            'errors': [],
+            'files': []
+        }
+        
+        start_time = datetime.now()
+        
+        for i, file_path_obj in enumerate(files, 1):
+            click.echo(f"[{i}/{len(files)}] Processing: {file_path_obj.name}")
+            
+            try:
+                result = service.ingest_single_file(str(file_path_obj), force_reprocess=force)
+                results['processed'] += 1
+                
+                # Check if file was skipped (either by should_skip_file or already exists)
+                if result.get('skipped'):
+                    results['skipped'] += 1
+                    click.echo(f"  ⏭️  Skipped: {result.get('reason', 'File unchanged')}")
+                    if result.get('file_id'):
+                        click.echo(f"      File ID: {result.get('file_id', 'N/A')}")
+                        click.echo(f"      Chunks: {result.get('chunks_created', 0)}")
+                        click.echo(f"      Words: {result.get('word_count', 0)}")
+                        click.echo(f"      Time: {result.get('processing_time', 0):.2f}s")
+                elif result['success']:
+                    results['succeeded'] += 1
+                    click.echo(f"  ✅ Success: {result['chunks_created']} chunks created")
+                    click.echo(f"      File ID: {result.get('file_id', 'N/A')}")
+                    click.echo(f"      Words: {result.get('word_count', 0)}")
+                    click.echo(f"      Source: {result.get('source_id', 'simics-dml')}")
+                    click.echo(f"      Time: {result.get('processing_time', 0):.2f}s")
+                else:
+                    results['failed'] += 1
+                    results['errors'].append({
+                        'file': str(file_path_obj),
+                        'error': result.get('error', 'Unknown error')
+                    })
+                    click.echo(f"  ❌ Failed: {result.get('error', 'Unknown')}")
+                
+                results['files'].append({
+                    'file': str(file_path_obj),
+                    'status': 'skipped' if result.get('skipped') else ('success' if result['success'] else 'failed'),
+                    'chunks': result.get('chunks_created', 0),
+                    'processing_time': result.get('processing_time', 0)
+                })
+                
+            except Exception as e:
+                click.echo(f"  ❌ Unexpected error: {e}")
+                results['failed'] += 1
+                results['errors'].append({
+                    'file': str(file_path_obj),
+                    'error': str(e)
+                })
+        
+        total_time = (datetime.now() - start_time).total_seconds()
+        results['total_processing_time'] = total_time
         
         # Display results
-        if result['success']:
-            if is_directory:
-                # Directory results
-                click.echo("\n✅ DML directory ingestion completed!")
-                click.echo(f"📊 Summary:")
-                click.echo(f"  - Total files: {result['total_files']}")
-                click.echo(f"  - Succeeded: {result['succeeded']}")
-                click.echo(f"  - Skipped: {result['skipped']}")
-                click.echo(f"  - Failed: {result['failed']}")
-                click.echo(f"  - Total time: {result['total_processing_time']:.2f}s")
-                
-                if result['errors']:
-                    click.echo(f"\n⚠️  Errors encountered:")
-                    for error in result['errors'][:5]:  # Show first 5 errors
-                        click.echo(f"  - {Path(error['file']).name}: {error['error']}")
-                    if len(result['errors']) > 5:
-                        click.echo(f"  ... and {len(result['errors']) - 5} more errors")
-            else:
-                # Single file results
-                if result.get('skipped', False):
-                    click.echo("⏭️  File already exists in database - skipped!")
-                    click.echo(f"📊 Existing file details:")
-                    click.echo(f"  - File ID: {result['file_id']}")
-                    click.echo(f"  - Chunks: {result['chunks_created']}")
-                    click.echo(f"  - Word count: {result['word_count']}")
-                    click.echo(f"  - Reason: {result.get('reason', 'File unchanged')}")
-                    click.echo(f"  - Check time: {result['processing_time']:.2f}s")
-                else:
-                    click.echo("✅ DML file ingestion completed successfully!")
-                    click.echo(f"📊 Results:")
-                    click.echo(f"  - File ID: {result['file_id']}")
-                    click.echo(f"  - Chunks created: {result['chunks_created']}")
-                    click.echo(f"  - Word count: {result['word_count']}")
-                    click.echo(f"  - Source type: {result.get('source_type', 'dml')}")
-                    click.echo(f"  - Source ID: {result.get('source_id', 'simics-dml')}")
-                    click.echo(f"  - Processing time: {result['processing_time']:.2f}s")
+        if results['success']:
+            click.echo("\n✅ DML directory ingestion completed!")
+            click.echo(f"📊 Summary:")
+            click.echo(f"  - Total files: {results['total_files']}")
+            click.echo(f"  - Succeeded: {results['succeeded']}")
+            click.echo(f"  - Skipped: {results['skipped']}")
+            click.echo(f"  - Failed: {results['failed']}")
+            click.echo(f"  - Total time: {results['total_processing_time']:.2f}s")
+            
+            if results['errors']:
+                click.echo(f"\n⚠️  Errors encountered:")
+                for error in results['errors'][:5]:  # Show first 5 errors
+                    click.echo(f"  - {Path(error['file']).name}: {error['error']}")
+                if len(results['errors']) > 5:
+                    click.echo(f"  ... and {len(results['errors']) - 5} more errors")
         else:
-            click.echo(f"❌ Ingestion failed: {result['error']}", err=True)
-            raise Exception(result['error'])
+            error_msg = results['errors'][0]['error'] if results['errors'] else 'Unknown error'
+            click.echo(f"❌ Ingestion failed: {error_msg}", err=True)
+            raise Exception(error_msg)
         
     except Exception as e:
         click.echo(f"❌ Error during DML ingestion: {e}", err=True)
@@ -241,6 +296,7 @@ def ingest_python(ctx, file_path: str, force: bool, test_only: bool, skip_test: 
     from ..services.source_ingest_service import SourceIngestService
     from ..services.git_service import GitService
     from pathlib import Path
+    from datetime import datetime
     
     verbose_echo(ctx, "Ingesting Python file(s)...")
     
@@ -278,79 +334,106 @@ def ingest_python(ctx, file_path: str, force: bool, test_only: bool, skip_test: 
         git_service = GitService()
         service = SourceIngestService(backend, source_type="python", git_service=git_service, test_filter=test_filter)
         
-        # Process the Python test file(s)
-        result = service.ingest_source_file(file_path, force_reprocess=force)
+        # Handle directory vs single file
+        if is_directory:
+            # Find all Python files in directory
+            files = list(path.rglob('*.py'))
+            
+            if not files:
+                click.echo(f"❌ No .py files found in {file_path}", err=True)
+                return
+        else:
+            files = [path]
+            
+        click.echo(f"📁 Found {len(files)} Python files")
+        click.echo()
+        
+        # Process each file
+        results = {
+            'success': True,
+            'total_files': len(files),
+            'processed': 0,
+            'succeeded': 0,
+            'skipped': 0,
+            'failed': 0,
+            'errors': [],
+            'files': []
+        }
+        
+        start_time = datetime.now()
+        
+        for i, file_path_obj in enumerate(files, 1):
+            click.echo(f"[{i}/{len(files)}] Processing: {file_path_obj.name}")
+            
+            try:
+                result = service.ingest_single_file(str(file_path_obj), force_reprocess=force)
+                results['processed'] += 1
+                
+                # Check if file was skipped (either by should_skip_file or already exists)
+                if result.get('skipped'):
+                    results['skipped'] += 1
+                    click.echo(f"  ⏭️  Skipped: {result.get('reason', 'File unchanged')}")
+                    if result.get('file_id'):
+                        click.echo(f"      File ID: {result.get('file_id', 'N/A')}")
+                        click.echo(f"      Chunks: {result.get('chunks_created', 0)}")
+                        click.echo(f"      Words: {result.get('word_count', 0)}")
+                        click.echo(f"      Time: {result.get('processing_time', 0):.2f}s")
+                elif result['success']:
+                    results['succeeded'] += 1
+                    click.echo(f"  ✅ Success: {result['chunks_created']} chunks created")
+                    click.echo(f"      File ID: {result.get('file_id', 'N/A')}")
+                    click.echo(f"      Words: {result.get('word_count', 0)}")
+                    click.echo(f"      Source: {result.get('source_id', 'simics-python')}")
+                    click.echo(f"      Time: {result.get('processing_time', 0):.2f}s")
+                else:
+                    results['failed'] += 1
+                    results['errors'].append({
+                        'file': str(file_path_obj),
+                        'error': result.get('error', 'Unknown error')
+                    })
+                    click.echo(f"  ❌ Failed: {result.get('error', 'Unknown')}")
+                
+                results['files'].append({
+                    'file': str(file_path_obj),
+                    'status': 'skipped' if result.get('skipped') else ('success' if result['success'] else 'failed'),
+                    'chunks': result.get('chunks_created', 0),
+                    'processing_time': result.get('processing_time', 0)
+                })
+                
+            except Exception as e:
+                click.echo(f"  ❌ Unexpected error: {e}")
+                results['failed'] += 1
+                results['errors'].append({
+                    'file': str(file_path_obj),
+                    'error': str(e)
+                })
+        
+        total_time = (datetime.now() - start_time).total_seconds()
+        results['total_processing_time'] = total_time
         
         # Display results
-        if result['success']:
-            if is_directory:
-                # Directory results
-                click.echo("\n✅ Python directory ingestion completed!")
-                click.echo(f"📊 Summary:")
-                click.echo(f"  - Total files: {result['total_files']}")
-                click.echo(f"  - Succeeded: {result['succeeded']}")
-                click.echo(f"  - Skipped: {result['skipped']}")
-                click.echo(f"  - Failed: {result['failed']}")
-                click.echo(f"  - Total time: {result['total_processing_time']:.2f}s")
-                
-                if result['errors']:
-                    click.echo(f"\n⚠️  Errors encountered:")
-                    for error in result['errors'][:5]:  # Show first 5 errors
-                        click.echo(f"  - {Path(error['file']).name}: {error['error']}")
-                    if len(result['errors']) > 5:
-                        click.echo(f"  ... and {len(result['errors']) - 5} more errors")
-            else:
-                # Single file results
-                if result.get('skipped', False):
-                    click.echo("⏭️  File already exists in database - skipped!")
-                    click.echo(f"📊 Existing file details:")
-                    click.echo(f"  - File ID: {result['file_id']}")
-                    click.echo(f"  - Chunks: {result['chunks_created']}")
-                    click.echo(f"  - Word count: {result['word_count']}")
-                    click.echo(f"  - Reason: {result.get('reason', 'File unchanged')}")
-                    click.echo(f"  - Check time: {result['processing_time']:.2f}s")
-                else:
-                    click.echo("✅ Python file ingestion completed successfully!")
-                    click.echo(f"📊 Results:")
-                    click.echo(f"  - File ID: {result['file_id']}")
-                    click.echo(f"  - Chunks created: {result['chunks_created']}")
-                    click.echo(f"  - Word count: {result['word_count']}")
-                    click.echo(f"  - Source type: {result.get('source_type', 'python')}")
-                    click.echo(f"  - Source ID: {result.get('source_id', 'simics-python')}")
-                    click.echo(f"  - Processing time: {result['processing_time']:.2f}s")
+        if results['success']:
+            click.echo("\n✅ Python ingestion completed!")
+            click.echo(f"📊 Summary:")
+            click.echo(f"  - Total files: {results['total_files']}")
+            click.echo(f"  - Succeeded: {results['succeeded']}")
+            click.echo(f"  - Skipped: {results['skipped']}")
+            click.echo(f"  - Failed: {results['failed']}")
+            click.echo(f"  - Total time: {results['total_processing_time']:.2f}s")
+            
+            if results['errors']:
+                click.echo(f"\n⚠️  Errors encountered:")
+                for error in results['errors'][:5]:  # Show first 5 errors
+                    click.echo(f"  - {Path(error['file']).name}: {error['error']}")
+                if len(results['errors']) > 5:
+                    click.echo(f"  ... and {len(results['errors']) - 5} more errors")
         else:
-            click.echo(f"❌ Ingestion failed: {result['error']}", err=True)
-            raise Exception(result['error'])
+            error_msg = results['errors'][0]['error'] if results['errors'] else 'Unknown error'
+            click.echo(f"❌ Ingestion failed: {error_msg}", err=True)
+            raise Exception(error_msg)
         
     except Exception as e:
         click.echo(f"❌ Error during Python ingestion: {e}", err=True)
-        raise
-        
-        # Display results
-        if result['success']:
-            if result.get('skipped', False):
-                click.echo("⏭️  File already exists in database - skipped!")
-                click.echo(f"📊 Existing file details:")
-                click.echo(f"  - File ID: {result['file_id']}")
-                click.echo(f"  - Chunks: {result['chunks_created']}")
-                click.echo(f"  - Word count: {result['word_count']}")
-                click.echo(f"  - Reason: {result.get('reason', 'File unchanged')}")
-                click.echo(f"  - Check time: {result['processing_time']:.2f}s")
-            else:
-                click.echo("✅ Python test file ingestion completed successfully!")
-                click.echo(f"📊 Results:")
-                click.echo(f"  - File ID: {result['file_id']}")
-                click.echo(f"  - Chunks created: {result['chunks_created']}")
-                click.echo(f"  - Word count: {result['word_count']}")
-                click.echo(f"  - Source type: {result.get('source_type', 'python')}")
-                click.echo(f"  - Source ID: {result.get('source_id', 'simics-python')}")
-                click.echo(f"  - Processing time: {result['processing_time']:.2f}s")
-        else:
-            click.echo(f"❌ Ingestion failed: {result['error']}", err=True)
-            raise Exception(result['error'])
-        
-    except Exception as e:
-        click.echo(f"❌ Error during Python test ingestion: {e}", err=True)
         raise
 
 

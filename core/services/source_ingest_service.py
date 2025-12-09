@@ -461,154 +461,18 @@ class SourceIngestService:
             'modified_time': file_stat.st_mtime
         }
     
-    def ingest_source_file(self, file_path: str, force_reprocess: bool = False) -> Dict[str, Any]:
-        """
-        Ingest source file(s) into the RAG system.
-        
-        Handles both individual files and directories:
-        - If file_path is a file: Process that single file
-        - If file_path is a directory: Use glob to find all matching source files and process them
-        
-        Workflow (per file):
-        1. Process file and extract metadata
-        2. Check if already exists (unless force_reprocess)
-        3. Chunk source code using AST-aware chunking
-        4. Generate embeddings
-        5. Store in database
-        
-        Args:
-            file_path: Path to source file or directory
-            force_reprocess: If True, remove existing data and re-ingest
-            
-        Returns:
-            Dictionary with ingestion results (aggregated if directory)
-        """
-        path = Path(file_path)
-        
-        # Validate path exists
-        if not path.exists():
-            return {
-                'success': False,
-                'error': f'Path not found: {file_path}'
-            }
-        
-        # Handle directory
-        if path.is_dir():
-            return self._ingest_directory(str(path), force_reprocess)
-        
-        # Handle single file
-        return self._ingest_single_file(str(path), force_reprocess)
-    
-    def _ingest_directory(self, dir_path: str, force_reprocess: bool = False) -> Dict[str, Any]:
-        """
-        Ingest all source files from a directory.
-        
-        Args:
-            dir_path: Directory path
-            force_reprocess: If True, remove existing data and re-ingest
-            
-        Returns:
-            Dictionary with aggregated results
-        """
-        # Determine file extension pattern
-        extension_map = {
-            'dml': '*.dml',
-            'python': '*.py',
-            'cpp': '*.cc'
-        }
-        
-        pattern = extension_map.get(self.source_type)
-        if not pattern:
-            return {
-                'success': False,
-                'error': f'Unsupported source_type: {self.source_type}. Use "dml", "python", or "cpp"'
-            }
-        
-        # Find all matching files
-        dir_path_obj = Path(dir_path)
-        files = list(dir_path_obj.rglob(pattern))
-        
-        if not files:
-            return {
-                'success': False,
-                'error': f'No {pattern} files found in {dir_path}'
-            }
-        
-        logging.info(f"📁 Found {len(files)} {self.source_type.upper()} files in {dir_path}")
-        
-        # Process each file
-        results = {
-            'success': True,
-            'total_files': len(files),
-            'processed': 0,
-            'succeeded': 0,
-            'skipped': 0,
-            'failed': 0,
-            'errors': [],
-            'files': []
-        }
-        
-        start_time = datetime.now()
-        
-        for i, file_path in enumerate(files, 1):
-            logging.info(f"\n[{i}/{len(files)}] Processing: {file_path.name}")
-            
-            try:
-                result = self._ingest_single_file(str(file_path), force_reprocess)
-                results['processed'] += 1
-                
-                if result['success']:
-                    if result.get('skipped'):
-                        results['skipped'] += 1
-                    else:
-                        results['succeeded'] += 1
-                else:
-                    results['failed'] += 1
-                    results['errors'].append({
-                        'file': str(file_path),
-                        'error': result.get('error', 'Unknown error')
-                    })
-                
-                results['files'].append({
-                    'file': str(file_path),
-                    'status': 'skipped' if result.get('skipped') else ('success' if result['success'] else 'failed'),
-                    'chunks': result.get('chunks_created', 0),
-                    'processing_time': result.get('processing_time', 0)
-                })
-                
-            except Exception as e:
-                logging.error(f"   ❌ Unexpected error: {e}")
-                results['failed'] += 1
-                results['errors'].append({
-                    'file': str(file_path),
-                    'error': str(e)
-                })
-        
-        total_time = (datetime.now() - start_time).total_seconds()
-        results['total_processing_time'] = total_time
-        
-        logging.info(f"\n{'='*60}")
-        logging.info(f"📊 Directory Ingestion Summary:")
-        logging.info(f"   Total files: {results['total_files']}")
-        logging.info(f"   Succeeded: {results['succeeded']}")
-        logging.info(f"   Skipped: {results['skipped']}")
-        logging.info(f"   Failed: {results['failed']}")
-        logging.info(f"   Total time: {total_time:.2f}s")
-        logging.info(f"{'='*60}")
-        
-        return results
-    
-    def _ingest_single_file(self, file_path: str, force_reprocess: bool = False) -> Dict[str, Any]:
+    def ingest_single_file(self, file_path: str, force_reprocess: bool = False) -> Dict[str, Any]:
         """
         Ingest a single source file into the RAG system.
         
         Workflow:
-        1. Process file and extract metadata
-        2. Generate file summary (if USE_CODE_SUMMARIZATION enabled)
-        3. Check if already exists (unless force_reprocess)
-        4. Chunk source code using AST-aware chunking
-        5. Generate chunk summaries (if USE_CODE_SUMMARIZATION enabled)
-        6. Generate embeddings and store in database
+        1. Check if file should be skipped (DML 1.2, test filtering)
+        2. Process file and extract metadata
+        3. Generate file summary (if USE_CODE_SUMMARIZATION enabled)
+        4. Check if already exists (unless force_reprocess)
+        5. Chunk source code using AST-aware chunking
+        6. Generate chunk summaries (if USE_CODE_SUMMARIZATION enabled)
+        7. Generate embeddings and store in database
         
         Args:
             file_path: Path to source file
@@ -617,12 +481,15 @@ class SourceIngestService:
         Returns:
             Dictionary with ingestion results
         """
+
         start_time = datetime.now()
         if self.should_skip_file(file_path):
+            processing_time = (datetime.now() - start_time).total_seconds()
             return {
                 'success': False,
                 'skipped': True,
-                'reason': 'File matches skip patterns'
+                'reason': 'File matches skip patterns',
+                'processing_time': processing_time
             }
         
         try:
