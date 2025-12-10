@@ -604,17 +604,18 @@ class SourceIngestService:
                     file_size=stats['size'],
                     content_type=f'code_{source_type}'
                 )
-            
+        
             # Check if code summarization is enabled
             use_summarization = os.getenv("USE_CODE_SUMMARIZATION", "true").lower() == "true"
-            
+            summary_model = os.getenv("MODEL_CHOICE", "github_copilot/gpt-4o")
+
             # ========== STEP 1: Generate File Summary ==========
             file_summary = None
             if use_summarization:
                 try:
                     logging.info("   📝 Step 1: Generating file summary...")
                     from ..code_summarizer import generate_file_summary
-                    file_summary = generate_file_summary(content, metadata)
+                    file_summary = generate_file_summary(content, metadata, model=summary_model)
                     logging.info(f"      ✓ Summary: {file_summary[:80]}...")
                 except Exception as e:
                     logging.warning(f"      ⚠️ Failed to generate file summary: {e}")
@@ -644,7 +645,8 @@ class SourceIngestService:
                         chunk_summaries[i] = generate_chunk_summary(
                             chunk_dict["content"], 
                             file_summary, 
-                            chunk_meta
+                            chunk_meta,
+                            model=summary_model
                         )
                     logging.info(f"      ✓ Generated {len(chunk_dicts)} chunk summaries")
                 except Exception as e:
