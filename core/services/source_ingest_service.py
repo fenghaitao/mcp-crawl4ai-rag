@@ -288,11 +288,6 @@ class SourceIngestService:
             file_ext = Path(file_path).suffix.lower()
             
             if file_ext == '.dml':
-                # Check if this is DML 1.2 (which we skip)
-                if self.is_dml_1_2(content):
-                    logging.info(f"    ⏭️  Skipping DML 1.2 file: {Path(file_path).name}")
-                    return None
-                
                 file_type = 'dml'
                 metadata = self.extract_dml_metadata(content, file_path)
             
@@ -483,14 +478,6 @@ class SourceIngestService:
         """
 
         start_time = datetime.now()
-        if self.should_skip_file(file_path):
-            processing_time = (datetime.now() - start_time).total_seconds()
-            return {
-                'success': False,
-                'skipped': True,
-                'reason': 'File matches skip patterns',
-                'processing_time': processing_time
-            }
         
         try:
             # Validate file exists
@@ -500,9 +487,13 @@ class SourceIngestService:
                     'error': f'File not found: {file_path}'
                 }
             
-            # Check if code summarization is enabled
-            use_summarization = os.getenv("USE_CODE_SUMMARIZATION", "true").lower() == "true"
-            
+            if self.should_skip_file(file_path):
+                return {
+                    'success': False,
+                    'skipped': True,
+                    'reason': 'File matches skip patterns',
+                }
+
             # Process source file
             logging.info(f"📄 Processing source file: {Path(file_path).name}")
             file_data = self.process_source_file(file_path)
@@ -511,27 +502,13 @@ class SourceIngestService:
                 return {
                     'success': False,
                     'skipped': True,
-                    'reason': 'File skipped (DML 1.2 or unsupported type)'
+                    'reason': 'Unknown file type'
                 }
             
             content = file_data['content']
             metadata = file_data['metadata']
             source_type = metadata['language']
             source_id = file_data['source_id']
-            
-            # ========== STEP 1: Generate File Summary ==========
-            file_summary = None
-            if use_summarization:
-                try:
-                    logging.info("   📝 Step 1: Generating file summary...")
-                    from ..code_summarizer import generate_file_summary
-                    file_summary = generate_file_summary(content, metadata)
-                    logging.info(f"      ✓ Summary: {file_summary[:80]}...")
-                except Exception as e:
-                    logging.warning(f"      ⚠️ Failed to generate file summary: {e}")
-                    file_summary = None
-            else:
-                logging.info("   📝 Step 1: Skipped (summarization disabled)")
             
             # Calculate file hash and stats
             content_hash = self._calculate_file_hash(file_path)
@@ -598,6 +575,23 @@ class SourceIngestService:
                     content_type=f'code_{source_type}'
                 )
             
+            # Check if code summarization is enabled
+            use_summarization = os.getenv("USE_CODE_SUMMARIZATION", "true").lower() == "true"
+            
+            # ========== STEP 1: Generate File Summary ==========
+            file_summary = None
+            if use_summarization:
+                try:
+                    logging.info("   📝 Step 1: Generating file summary...")
+                    from ..code_summarizer import generate_file_summary
+                    file_summary = generate_file_summary(content, metadata)
+                    logging.info(f"      ✓ Summary: {file_summary[:80]}...")
+                except Exception as e:
+                    logging.warning(f"      ⚠️ Failed to generate file summary: {e}")
+                    file_summary = None
+            else:
+                logging.info("   📝 Step 1: Skipped (summarization disabled)")
+
             # Chunk source code
             logging.info(f"   📦 Step 2: Chunking {source_type.upper()} source code...")
             chunk_dicts = self.chunk_source_code(content, source_type, file_path)
