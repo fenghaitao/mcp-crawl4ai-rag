@@ -460,14 +460,19 @@ class SourceIngestService:
         """
         Ingest a single source file into the RAG system.
         
+        Content-based versioning: Only creates new versions when content actually changes.
+        - Without force: Skips if content unchanged
+        - With force: Re-processes (deletes old file/chunks and recreates with same content hash)
+        
         Workflow:
-        1. Check if file should be skipped (DML 1.2, test filtering)
-        2. Process file and extract metadata
-        3. Generate file summary (if USE_CODE_SUMMARIZATION enabled)
-        4. Check if already exists (unless force_reprocess)
-        5. Chunk source code using AST-aware chunking
-        6. Generate chunk summaries (if USE_CODE_SUMMARIZATION enabled)
-        7. Generate embeddings and store in database
+        1. Check for uncommitted changes (if git_service available)
+        2. Check if file should be skipped (DML 1.2, test filtering)
+        3. Process file and extract metadata
+        4. Generate file summary (if USE_CODE_SUMMARIZATION enabled)
+        5. Check if already exists (unless force_reprocess)
+        6. Chunk source code using AST-aware chunking
+        7. Generate chunk summaries (if USE_CODE_SUMMARIZATION enabled)
+        8. Generate embeddings and store in database
         
         Args:
             file_path: Path to source file
@@ -480,6 +485,16 @@ class SourceIngestService:
         start_time = datetime.now()
         
         try:
+            # Check for uncommitted changes if git_service is available
+            if self.git_service:
+                is_committed, message = self.git_service.check_file_committed(Path(file_path))
+                if not is_committed:
+                    return {
+                        'success': False,
+                        'error': f'Cannot ingest file with uncommitted changes: {message}',
+                        'processing_time': (datetime.now() - start_time).total_seconds()
+                    }
+            
             # Validate file exists
             if not Path(file_path).exists():
                 return {
@@ -510,48 +525,63 @@ class SourceIngestService:
             source_type = metadata['language']
             source_id = file_data['source_id']
             
-            # Calculate file hash and stats
+            # Detect git repository if git_service is available
+            git_info = None
+            repo_id = None
+            relative_path = file_path
+            
+            if self.git_service:
+                git_info = self.git_service.detect_repository(Path(file_path))
+                if git_info:
+                    # Get or create repository record
+                    repo = self.backend.get_repository(git_info.repo_url)
+                    if not repo:
+                        repo_name = git_info.repo_url.split('/')[-1].replace('.git', '')
+                        repo_id = self.backend.store_repository(git_info.repo_url, repo_name)
+                    else:
+                        repo_id = repo['id']
+                        self.backend.update_repository_last_ingested(repo_id)
+                    
+                    # Get relative path from git root
+                    abs_file_path = Path(file_path).resolve()
+                    relative_path = git_info.get_relative_path(abs_file_path)
+            
+            # Calculate file hash for change detection
             content_hash = self._calculate_file_hash(file_path)
             stats = self._get_file_stats(file_path)
             
-            # Check if file already exists
-            if not force_reprocess:
-                existing = self.backend.check_file_exists(file_path, content_hash)
-                if existing:
+            # Check for existing version with same content (content-based versioning)
+            existing_current = None
+            if git_info and repo_id:
+                # For git-tracked files, check current version by repo_id and path
+                existing_current = self.backend.get_current_file(repo_id, relative_path)
+            else:
+                # For non-git files, check by file path and hash
+                existing_current = self.backend.check_file_exists(file_path, content_hash)
+            
+            # Content-based versioning logic
+            if existing_current and existing_current.get('content_hash') == content_hash:
+                # Content unchanged!
+                if force_reprocess:
+                    # Force: Delete old file and chunks, then recreate
+                    logging.info("   🔄 Force reprocess: removing existing data...")
+                    self.backend.remove_file_data(relative_path if git_info else file_path)
+                else:
+                    # No force: Skip entirely
                     processing_time = (datetime.now() - start_time).total_seconds()
                     return {
                         'success': True,
+                        'file_id': existing_current['id'],
+                        'chunks_created': existing_current.get('chunk_count', 0),
+                        'word_count': existing_current.get('word_count', 0),
+                        'processing_time': processing_time,
                         'skipped': True,
-                        'file_id': existing['id'],
-                        'chunks_created': existing.get('chunk_count', 0),
-                        'word_count': existing.get('word_count', 0),
-                        'reason': 'File unchanged',
-                        'processing_time': processing_time
+                        'reason': 'Content unchanged - skipped'
                     }
-            else:
-                # Force reprocess: remove existing data
-                logging.info("   🔄 Force reprocess: removing existing data...")
-                self.backend.remove_file_data(file_path)
-            
-            # Get git info if available
-            git_info = None
-            if self.git_service:
-                git_info = self.git_service.detect_repository(Path(file_path))
-            
-            # Store file record
+
+            # Store file record (with git info if available)
             logging.info("   💾 Storing file record...")
             if git_info:
-                # Use temporal versioning
-                repo = self.backend.get_repository(git_info.repo_url)
-                if not repo:
-                    repo_name = git_info.repo_url.split('/')[-1].replace('.git', '')
-                    repo_id = self.backend.store_repository(git_info.repo_url, repo_name)
-                else:
-                    repo_id = repo['id']
-                
-                abs_file_path = Path(file_path).resolve()
-                relative_path = git_info.get_relative_path(abs_file_path)
-                
                 file_version = {
                     'repo_id': repo_id,
                     'commit_sha': git_info.commit_sha,
@@ -700,14 +730,15 @@ class SourceIngestService:
             
             # Store chunks (embeddings already generated)
             logging.info(f"   💾 Step 6: Storing chunks in database...")
-            result = self.backend.store_chunks(file_id, chunks_to_store, file_path)
+            result = self.backend.store_chunks(file_id, chunks_to_store, relative_path if git_info else file_path)
+            self.backend.update_file_statistics(file_id, result['chunks'], result['words'])
             logging.info(f"      ✓ Stored chunks successfully: {result.get('chunks', 0)} chunks")
             
             processing_time = (datetime.now() - start_time).total_seconds()
             
             logging.info(f"   ✅ File completed successfully!")
             
-            return {
+            result_dict = {
                 'success': True,
                 'file_id': file_id,
                 'chunks_created': result.get('chunks', len(chunks_to_store)),
@@ -719,6 +750,15 @@ class SourceIngestService:
                 'file_summary': file_summary if use_summarization else None,
                 'embeddings_generated': sum(1 for c in chunks_to_store if c.embedding is not None)
             }
+            
+            # Add version info if force reprocessed
+            if force_reprocess and existing_current and existing_current.get('content_hash') == content_hash:
+                result_dict['reprocessed'] = True
+                result_dict['reason'] = 'Content unchanged - re-processed with force flag'
+            elif existing_current:
+                result_dict['new_version'] = True
+            
+            return result_dict
             
         except Exception as e:
             logging.error(f"   ❌ Error ingesting source file: {e}")
