@@ -31,14 +31,41 @@ class ChromaBackend(DatabaseBackend):
         Get or create a collection for metadata (files, repositories).
         These collections store metadata only and use documents for searchability.
         No embeddings are needed - ChromaDB will use default embedding function.
+        
+        For the 'content_chunks' collection, if hybrid search is enabled, this method
+        will set up BM25 sparse indexing in addition to dense vector embeddings.
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         try:
-            # Use get_or_create without specifying embedding function
-            # ChromaDB will use its default embedding function
-            return self._client.get_or_create_collection(
-                name=name,
-                metadata={"hnsw:space": "l2"}
-            )
+            # Check if this is the content_chunks collection and hybrid search is enabled
+            if name == 'content_chunks' and self._is_hybrid_search_enabled():
+                logger.info(f"Hybrid search is enabled for collection '{name}'")
+                
+                # Attempt to set up hybrid collection with BM25 support
+                collection = self._setup_hybrid_collection(name)
+                
+                # If BM25 setup failed, fall back to standard collection
+                if collection is None:
+                    logger.warning(f"BM25 setup failed for '{name}', using standard collection")
+                    collection = self._client.get_or_create_collection(
+                        name=name,
+                        metadata={"hnsw:space": "cosine"}
+                    )
+                
+                return collection
+            else:
+                # For other collections or when hybrid search is disabled
+                if name == 'content_chunks':
+                    logger.info(f"Hybrid search is disabled for collection '{name}', using dense-only search")
+                
+                # Use get_or_create without specifying embedding function
+                # ChromaDB will use its default embedding function
+                return self._client.get_or_create_collection(
+                    name=name,
+                    metadata={"hnsw:space": "l2"}
+                )
         except Exception as e:
             raise e
     
@@ -145,20 +172,13 @@ class ChromaBackend(DatabaseBackend):
             
             for collection_name in collection_names:
                 try:
-                    # Try to get the collection first
-                    collection = self._client.get_collection(collection_name)
-                    print(f"✅ Collection '{collection_name}' already exists")
-                except Exception:
-                    # Collection doesn't exist, create it
-                    try:
-                        collection = self._client.create_collection(
-                            name=collection_name,
-                            metadata={"hnsw:space": "cosine"}
-                        )
-                        print(f"✅ Created collection '{collection_name}'")
-                    except Exception as create_error:
-                        print(f"❌ Error creating collection '{collection_name}': {create_error}")
-                        return False
+                    # Use _get_or_create_metadata_collection to ensure proper setup
+                    # (including hybrid search for content_chunks if enabled)
+                    collection = self._get_or_create_metadata_collection(collection_name)
+                    print(f"✅ Collection '{collection_name}' ready")
+                except Exception as create_error:
+                    print(f"❌ Error setting up collection '{collection_name}': {create_error}")
+                    return False
             
             return True
             
@@ -409,10 +429,10 @@ class ChromaBackend(DatabaseBackend):
     
     def store_chunks(self, file_id: str, chunks: List[Any], file_path: str) -> Dict[str, int]:
         """Store chunks in database and return statistics."""
-        chunks_collection = self._client.get_or_create_collection('content_chunks')
+        chunks_collection = self._client._get_or_create_metadata_collection('content_chunks')
         
         chunk_ids = []
-        chunk_documents = []
+        chunk_contents = []
         chunk_metadatas = []
         chunk_embeddings = []
         total_words = 0
@@ -423,7 +443,7 @@ class ChromaBackend(DatabaseBackend):
             
             # Safely get content (handle None)
             content = chunk.content if chunk.content else ''
-            chunk_documents.append(content)
+            chunk_contents.append(content)
             
             # Prepare metadata - safely access attributes that may not exist
             char_count = getattr(chunk.metadata, 'char_count', len(content))
@@ -475,14 +495,14 @@ class ChromaBackend(DatabaseBackend):
             if chunk_embeddings and len(chunk_embeddings) == len(chunk_ids):
                 chunks_collection.add(
                     ids=chunk_ids,
-                    documents=chunk_documents,
+                    documents=chunk_contents,
                     metadatas=chunk_metadatas,
                     embeddings=chunk_embeddings
                 )
             else:
                 chunks_collection.add(
                     ids=chunk_ids,
-                    documents=chunk_documents,
+                    documents=chunk_contents,
                     metadatas=chunk_metadatas
                 )
         
@@ -931,32 +951,104 @@ class ChromaBackend(DatabaseBackend):
             logger.error(f"Error getting chunks for file ID {file_id}: {e}")
             return []
     
-    def semantic_search(self, query_text: str, limit: int = 5,
-                       content_type: Optional[str] = None,
-                       threshold: Optional[float] = None) -> List[Dict[str, Any]]:
-        """Perform semantic search on content chunks using embeddings."""
+    def _is_hybrid_search_enabled(self) -> bool:
+        """Check if hybrid search is enabled via environment variable.
+        
+        Returns:
+            bool: True if USE_HYBRID_SEARCH is set to a truthy value (true, 1, yes),
+                  False otherwise.
+        """
+        use_hybrid = os.getenv('USE_HYBRID_SEARCH', '').lower()
+        return use_hybrid in ('true', '1', 'yes')
+    
+    def _setup_hybrid_collection(self, collection_name: str):
+        """Set up collection with BM25 sparse indexing support.
+        
+        This method configures a ChromaDB collection with both dense vector embeddings
+        and sparse BM25 indexing for hybrid search capabilities.
+        
+        Args:
+            collection_name: Name of the collection to create with hybrid search support
+            
+        Returns:
+            ChromaDB collection object with hybrid search schema, or None if BM25 is not available
+            
+        Raises:
+            Exception: If collection creation fails for reasons other than BM25 unavailability
+        """
         import logging
-        import sys
-        import os
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Import BM25 components
+            from chromadb import Schema, K
+            from chromadb.utils.embedding_functions import ChromaBm25EmbeddingFunction
+            
+            logger.info(f"Setting up hybrid collection '{collection_name}' with BM25 support")
+            
+            # Initialize BM25 embedding function
+            bm25_ef = ChromaBm25EmbeddingFunction()
+            
+            # Define schema with sparse index
+            schema = Schema()
+            schema.create_index(
+                key='bm25_sparse_vector',
+                config={
+                    'embedding_function': bm25_ef,
+                    'source_key': K.DOCUMENT
+                }
+            )
+            
+            # Create collection with hybrid search schema
+            collection = self._client.get_or_create_collection(
+                name=collection_name,
+                schema=schema,
+                metadata={"hnsw:space": "cosine"}  # For dense vectors
+            )
+            
+            logger.info(f"Successfully created hybrid collection '{collection_name}'")
+            return collection
+            
+        except ImportError as e:
+            # BM25 not available in this ChromaDB version
+            logger.warning(f"BM25 not available in ChromaDB version, falling back to dense-only search: {e}")
+            return None
+        except AttributeError as e:
+            # Schema or K not available
+            logger.warning(f"BM25 schema components not available, falling back to dense-only search: {e}")
+            return None
+        except Exception as e:
+            # Other errors during collection creation (e.g., missing dependencies like fastembed)
+            logger.error(f"Error creating hybrid collection '{collection_name}': {e}")
+            logger.warning("Falling back to dense-only search")
+            return None
+
+    def _perform_dense_search(self, query_embedding: List[float], 
+                             limit: int, where_clause: Optional[Dict]) -> List[Dict[str, Any]]:
+        """Perform dense vector search using query embedding.
+        
+        This method performs a semantic search using dense vector embeddings.
+        It queries the ChromaDB collection using the provided embedding and returns
+        results with similarity scores.
+        
+        Args:
+            query_embedding: The embedding vector for the query
+            limit: Maximum number of results to return
+            where_clause: Optional filter conditions for the search
+            
+        Returns:
+            List of dictionaries containing search results with similarity scores
+            
+        Raises:
+            Exception: If the search operation fails
+        """
+        import logging
         logger = logging.getLogger(__name__)
         
         try:
             chunks_collection = self._client.get_collection('content_chunks')
             
-            # Generate query embedding using the same embedding generator
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-            from server.utils import create_embedding
-            
-            query_embedding = create_embedding(query_text)
-            
-            if query_embedding is None:
-                logger.error("Failed to generate query embedding")
-                return []
-            
-            # Build where clause for filtering
-            where_clause = None
-            if content_type:
-                where_clause = {"content_type": content_type}
+            logger.debug(f"Performing dense search with limit={limit}, where_clause={where_clause}")
             
             # Perform semantic search using ChromaDB's query method with embedding
             results = chunks_collection.query(
@@ -976,10 +1068,6 @@ class ChromaBackend(DatabaseBackend):
                     distance = results['distances'][0][i] if results.get('distances') else 0
                     similarity = 1 - (distance / 2)  # Convert squared L2 distance to cosine similarity
                     
-                    # Apply threshold filter if specified
-                    if threshold is not None and similarity < threshold:
-                        continue
-                    
                     chunk_data = {
                         'id': results['ids'][0][i],
                         'content': results['documents'][0][i] if results.get('documents') else '',
@@ -997,13 +1085,337 @@ class ChromaBackend(DatabaseBackend):
                     
                     search_results.append(chunk_data)
             
-            logger.info(f"Semantic search found {len(search_results)} results for query: {query_text[:50]}...")
+            logger.info(f"Dense search found {len(search_results)} results")
             return search_results
             
         except Exception as e:
-            logger.error(f"Error performing semantic search: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error performing dense search: {e}", exc_info=True)
+            raise
+
+    def _perform_sparse_search(self, query_text: str, 
+                              limit: int, where_clause: Optional[Dict]) -> List[Dict[str, Any]]:
+        """Perform BM25 sparse search using query text.
+        
+        This method performs a keyword-based search using BM25 sparse vectors.
+        It queries the ChromaDB collection using the BM25 index and returns
+        results with BM25 scores.
+        
+        Args:
+            query_text: The text query for BM25 search
+            limit: Maximum number of results to return
+            where_clause: Optional filter conditions for the search
+            
+        Returns:
+            List of dictionaries containing search results with BM25 scores
+            
+        Raises:
+            Exception: If the search operation fails
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            chunks_collection = self._client.get_collection('content_chunks')
+            
+            logger.debug(f"Performing sparse BM25 search with limit={limit}, where_clause={where_clause}")
+            
+            # Perform BM25 search using ChromaDB's search API
+            # The search method uses the BM25 sparse vectors configured in the schema
+            results = chunks_collection.search(
+                query_texts=[query_text],
+                n_results=limit,
+                where=where_clause
+            )
+            
+            # Convert ChromaDB format to list of dictionaries
+            search_results = []
+            if results['ids'] and len(results['ids']) > 0:
+                for i in range(len(results['ids'][0])):
+                    # Get BM25 score from distances
+                    # For BM25, higher scores are better, but ChromaDB returns distances
+                    # We'll use the inverse of distance as the score
+                    distance = results['distances'][0][i] if results.get('distances') else 0
+                    bm25_score = 1 / (1 + distance) if distance >= 0 else 0
+                    
+                    chunk_data = {
+                        'id': results['ids'][0][i],
+                        'content': results['documents'][0][i] if results.get('documents') else '',
+                        'metadata': results['metadatas'][0][i] if results.get('metadatas') else {},
+                        'bm25_score': bm25_score,
+                        'distance': distance
+                    }
+                    
+                    # Add common fields from metadata for easier access
+                    metadata = chunk_data['metadata']
+                    chunk_data['url'] = metadata.get('url', '')
+                    chunk_data['chunk_number'] = metadata.get('chunk_number', 0)
+                    chunk_data['summary'] = metadata.get('summary', '')
+                    chunk_data['file_id'] = metadata.get('file_id', '')
+                    
+                    search_results.append(chunk_data)
+            
+            logger.info(f"Sparse BM25 search found {len(search_results)} results")
+            return search_results
+            
+        except Exception as e:
+            logger.error(f"Error performing sparse BM25 search: {e}", exc_info=True)
+            raise
+
+    def _merge_results_with_rrf(self, dense_results: List[Dict[str, Any]], 
+                                sparse_results: List[Dict[str, Any]], k: int = 60) -> List[Dict[str, Any]]:
+        """Merge search results using Reciprocal Rank Fusion (RRF).
+        
+        This method combines results from dense and sparse searches using the RRF algorithm.
+        For each document, the RRF score is calculated as: sum(1 / (k + rank)) across all
+        retrieval methods where the document appears.
+        
+        Args:
+            dense_results: Results from dense vector search
+            sparse_results: Results from sparse BM25 search
+            k: RRF constant (default 60)
+            
+        Returns:
+            List of merged results sorted by RRF score in descending order
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            logger.debug(f"Merging {len(dense_results)} dense results with {len(sparse_results)} sparse results using RRF (k={k})")
+            
+            # Build a dictionary to track documents and their rankings
+            doc_scores = {}
+            
+            # Process dense results
+            for rank, result in enumerate(dense_results):
+                doc_id = result['id']
+                rrf_contribution = 1 / (k + rank + 1)  # rank is 0-indexed, so add 1
+                
+                if doc_id not in doc_scores:
+                    doc_scores[doc_id] = {
+                        'result': result,
+                        'rrf_score': 0,
+                        'dense_rank': None,
+                        'sparse_rank': None
+                    }
+                
+                doc_scores[doc_id]['rrf_score'] += rrf_contribution
+                doc_scores[doc_id]['dense_rank'] = rank + 1  # Store 1-indexed rank
+            
+            # Process sparse results
+            for rank, result in enumerate(sparse_results):
+                doc_id = result['id']
+                rrf_contribution = 1 / (k + rank + 1)  # rank is 0-indexed, so add 1
+                
+                if doc_id not in doc_scores:
+                    # Document only in sparse results, need to get full data
+                    doc_scores[doc_id] = {
+                        'result': result,
+                        'rrf_score': 0,
+                        'dense_rank': None,
+                        'sparse_rank': None
+                    }
+                
+                doc_scores[doc_id]['rrf_score'] += rrf_contribution
+                doc_scores[doc_id]['sparse_rank'] = rank + 1  # Store 1-indexed rank
+            
+            # Build merged results list
+            merged_results = []
+            for doc_id, doc_data in doc_scores.items():
+                result = doc_data['result'].copy()
+                result['rrf_score'] = doc_data['rrf_score']
+                result['dense_rank'] = doc_data['dense_rank']
+                result['sparse_rank'] = doc_data['sparse_rank']
+                merged_results.append(result)
+            
+            # Sort by RRF score in descending order
+            merged_results.sort(key=lambda x: x['rrf_score'], reverse=True)
+            
+            logger.info(f"RRF merging produced {len(merged_results)} unique documents")
+            logger.debug(f"Top 3 RRF scores: {[r['rrf_score'] for r in merged_results[:3]]}")
+            
+            return merged_results
+            
+        except Exception as e:
+            logger.error(f"Error merging results with RRF: {e}", exc_info=True)
+            raise
+
+    def _apply_threshold_and_limit(self, results: List[Dict[str, Any]], 
+                                   threshold: Optional[float], limit: int) -> List[Dict[str, Any]]:
+        """Apply threshold filtering and limit to search results.
+        
+        This method filters results by similarity threshold (if specified) and limits
+        the number of results returned. It ensures all results contain required fields.
+        
+        Args:
+            results: List of search results to filter
+            threshold: Optional minimum similarity threshold (0-1)
+            limit: Maximum number of results to return
+            
+        Returns:
+            Filtered and limited list of results
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            logger.debug(f"Applying threshold={threshold} and limit={limit} to {len(results)} results")
+            
+            filtered_results = results
+            
+            # Apply threshold filter if specified
+            if threshold is not None:
+                filtered_results = [
+                    r for r in filtered_results 
+                    if r.get('similarity', 0) >= threshold
+                ]
+                logger.debug(f"After threshold filtering: {len(filtered_results)} results")
+            
+            # Apply limit
+            limited_results = filtered_results[:limit]
+            
+            # Ensure all results contain required fields
+            for result in limited_results:
+                # Ensure similarity field exists (for backward compatibility)
+                if 'similarity' not in result:
+                    result['similarity'] = 0.0
+                
+                # Ensure rrf_score exists in hybrid mode
+                if 'rrf_score' not in result:
+                    result['rrf_score'] = None
+            
+            logger.info(f"Returning {len(limited_results)} results after filtering and limiting")
+            
+            return limited_results
+            
+        except Exception as e:
+            logger.error(f"Error applying threshold and limit: {e}", exc_info=True)
+            raise
+
+    def semantic_search(self, query_text: str, limit: int = 5,
+                       content_type: Optional[str] = None,
+                       threshold: Optional[float] = None) -> List[Dict[str, Any]]:
+        """Perform semantic search on content chunks using embeddings.
+        
+        This method supports both dense-only and hybrid search modes. When hybrid search
+        is enabled (USE_HYBRID_SEARCH=true), it performs both dense vector search and
+        sparse BM25 search, then merges results using Reciprocal Rank Fusion (RRF).
+        
+        Args:
+            query_text: The search query text
+            limit: Maximum number of results to return (default 5)
+            content_type: Optional filter by content type
+            threshold: Optional minimum similarity threshold (0-1)
+            
+        Returns:
+            List of search results with similarity scores and metadata
+        """
+        import logging
+        import sys
+        import os
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Input validation
+            if not query_text or query_text.strip() == '':
+                logger.warning("Empty query text provided")
+                return []
+            
+            if limit < 1:
+                logger.warning(f"Invalid limit {limit}, using default 5")
+                limit = 5
+            
+            # Build where clause for filtering
+            where_clause = None
+            if content_type:
+                where_clause = {"content_type": content_type}
+            
+            # Check if hybrid search is enabled
+            if not self._is_hybrid_search_enabled():
+                logger.debug("Hybrid search disabled, using dense-only search")
+                
+                # Generate query embedding
+                sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+                from server.utils import create_embedding
+                
+                query_embedding = create_embedding(query_text)
+                
+                if query_embedding is None:
+                    logger.error("Failed to generate query embedding")
+                    return []
+                
+                # Perform dense-only search
+                search_results = self._perform_dense_search(query_embedding, limit, where_clause)
+                
+                # Apply threshold and limit
+                search_results = self._apply_threshold_and_limit(search_results, threshold, limit)
+                
+                logger.info(f"Dense-only search found {len(search_results)} results")
+                return search_results
+            
+            # Hybrid search mode
+            logger.info("Hybrid search enabled, performing dual search")
+            
+            dense_results = []
+            sparse_results = []
+            
+            # Perform dense search
+            try:
+                sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+                from server.utils import create_embedding
+                
+                query_embedding = create_embedding(query_text)
+                
+                if query_embedding is not None:
+                    # Request 2x limit to ensure sufficient candidates for merging
+                    dense_limit = limit * 2
+                    dense_results = self._perform_dense_search(query_embedding, dense_limit, where_clause)
+                    logger.info(f"Dense search returned {len(dense_results)} results")
+                else:
+                    logger.warning("Failed to generate query embedding for dense search")
+            except Exception as e:
+                logger.error(f"Dense search failed: {e}", exc_info=True)
+            
+            # Perform sparse search
+            try:
+                # Request 2x limit to ensure sufficient candidates for merging
+                sparse_limit = limit * 2
+                sparse_results = self._perform_sparse_search(query_text, sparse_limit, where_clause)
+                logger.info(f"Sparse search returned {len(sparse_results)} results")
+            except Exception as e:
+                logger.error(f"Sparse search failed: {e}", exc_info=True)
+            
+            # Handle partial failures
+            if not dense_results and not sparse_results:
+                logger.error("Both search methods failed")
+                return []
+            
+            if not dense_results:
+                logger.warning("Dense search failed, using sparse-only results")
+                search_results = self._apply_threshold_and_limit(sparse_results, threshold, limit)
+                logger.info(f"Returning {len(search_results)} sparse-only results")
+                return search_results
+            
+            if not sparse_results:
+                logger.warning("Sparse search failed, using dense-only results")
+                search_results = self._apply_threshold_and_limit(dense_results, threshold, limit)
+                logger.info(f"Returning {len(search_results)} dense-only results")
+                return search_results
+            
+            # Merge results using RRF
+            logger.debug("Merging dense and sparse results with RRF")
+            merged_results = self._merge_results_with_rrf(dense_results, sparse_results)
+            
+            # Apply threshold and limit
+            final_results = self._apply_threshold_and_limit(merged_results, threshold, limit)
+            
+            logger.info(f"Hybrid search completed: {len(final_results)} results returned")
+            logger.debug(f"Result breakdown - Dense: {len(dense_results)}, Sparse: {len(sparse_results)}, Merged: {len(merged_results)}, Final: {len(final_results)}")
+            
+            return final_results
+            
+        except Exception as e:
+            logger.error(f"Error performing semantic search: {e}", exc_info=True)
             return []
 
     def cleanup_orphaned_chunks(self, dry_run: bool = False) -> Dict[str, Any]:

@@ -698,7 +698,7 @@ class SourceIngestService:
                     chunk_metadata.update(chunk_dict['metadata'])
                 
                 chunk_data_list.append({
-                    'content': chunk_content,
+                    'content': embedding_content,
                     'metadata': chunk_metadata,
                     'summary': chunk_summaries[i] if use_summarization and chunk_summaries[i] else None
                 })

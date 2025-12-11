@@ -29,9 +29,11 @@ dependencies = [
     "rich>=13.0.0",
     "pydantic>=2.0.0",
     # Database backends
-    "chromadb>=0.4.0",
+    "chromadb>=0.5.0",
     # Git integration
     "gitpython>=3.1.0",
+    # Property-based testing
+    "hypothesis>=6.0.0",
 ]
 
 [project.optional-dependencies]
