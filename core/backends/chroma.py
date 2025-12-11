@@ -429,7 +429,7 @@ class ChromaBackend(DatabaseBackend):
     
     def store_chunks(self, file_id: str, chunks: List[Any], file_path: str) -> Dict[str, int]:
         """Store chunks in database and return statistics."""
-        chunks_collection = self._client._get_or_create_metadata_collection('content_chunks')
+        chunks_collection = self._get_or_create_metadata_collection('content_chunks')
         
         chunk_ids = []
         chunk_contents = []
