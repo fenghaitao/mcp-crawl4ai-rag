@@ -29,9 +29,10 @@ def rag():
 @click.option('--content-type', type=click.Choice(['documentation', 'code_dml', 'python_test']),
               help='Filter by content type')
 @click.option('--json', 'json_output', is_flag=True, help='Output in JSON format')
+@click.option('--preview', is_flag=True, help='Show only content preview (first 300 chars) in output')
 @click.pass_context
 @handle_cli_errors
-def query(ctx, query_text: str, limit: int, threshold: Optional[float], content_type: Optional[str], json_output: bool):
+def query(ctx, query_text: str, limit: int, threshold: Optional[float], content_type: Optional[str], json_output: bool, preview: bool):
     """Query the RAG system with semantic search."""
     from ..backends.factory import get_backend
     import json
@@ -83,7 +84,16 @@ def query(ctx, query_text: str, limit: int, threshold: Optional[float], content_
                         'chunk_number': r.get('chunk_number', 0),
                         'similarity': r.get('similarity', 0),
                         'summary': r.get('summary', ''),
-                        'content_preview': r.get('content', '')[:200] + '...' if len(r.get('content', '')) > 200 else r.get('content', ''),
+                        'content_preview': r.get('content', '')[:300] + '...' if len(r.get('content', '')) > 300 else r.get('content', ''),
+                        'metadata': r.get('metadata', {})
+                    } if preview else {
+                        'chunk_id': r.get('id'),
+                        'file_id': r.get('file_id'),
+                        'url': r.get('url', ''),
+                        'chunk_number': r.get('chunk_number', 0),
+                        'similarity': r.get('similarity', 0),
+                        'summary': r.get('summary', ''),
+                        'content': r.get('content', ''),
                         'metadata': r.get('metadata', {})
                     }
                     for r in results
@@ -109,10 +119,12 @@ def query(ctx, query_text: str, limit: int, threshold: Optional[float], content_
                         click.echo(f"   📝 Summary: {summary}")
                     
                     content = result.get('content', '')
-                    if content:
+                    if preview:
                         # Show first 300 characters
-                        if len(content) > 300:
+                        if content and len(content) > 300:
                             content = content[:300] + "..."
+                        click.echo(f"   📄 Content Preview: {content}")
+                    else:
                         click.echo(f"   📄 Content: {content}")
                     
                     metadata = result.get('metadata', {})
